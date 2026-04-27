@@ -125,20 +125,27 @@ class ConnectorAwareDataCollator:
 
 class ConnectorAwareTrainer(Trainer):
     """
-    FIXED FINAL: Trainer that passes BOTH attention_mask AND connector_mask to model.
+    FIXED FINAL: Trainer that uses Invisible Masking and AGA.
     
     KEY FEATURES:
     1. ✅ Extracts attention_mask from batch
-    2. ✅ Extracts connector_mask from batch (created by collator)
-    3. ✅ Passes BOTH masks to model for attention masking + embedding boost
-    4. ✅ Uses standard cross-entropy loss (Approach 1 - no compounding)
-    
-    THREE MASKS WORKING TOGETHER:
-    - attention_mask (0/1): Masks padding in attention mechanism
-    - connector_mask (1.0/1.1): Boosts connector embeddings
-    - labels (-100): Masks padding in loss computation
+    2. ✅ Invisible Masking: Dynamically identifies connector tokens from input_ids 
+    3. ✅ Adaptive Gradient Amplification (AGA): Dynamically calculates frequency-based boost
     """
     
+    def __init__(self, *args, connector_words=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.connector_token_ids = None
+        if connector_words is not None and self.tokenizer is not None:
+            # Get token IDs for all connector words to enable Invisible Masking
+            ids = set()
+            for word in connector_words:
+                tokens = self.tokenizer.encode(" " + word, add_special_tokens=False)
+                if tokens:
+                    ids.add(tokens[0])  # Primary subword
+            self.connector_token_ids = torch.tensor(list(ids), dtype=torch.long)
+            logger.info(f"✓ Initialized Invisible Masking with {len(ids)} connector token IDs")
+
     def _align_special_tokens(self):
         """Override to skip HF Trainer's config validation."""
         pass
@@ -152,51 +159,35 @@ class ConnectorAwareTrainer(Trainer):
     
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """
-        FIXED FINAL: Compute loss with BOTH attention_mask AND connector_mask.
-        
-        Flow:
-        1. Extract attention_mask from inputs
-        2. Extract connector_mask from inputs (created by collator)
-        3. Pass BOTH to model for complete masking strategy
-        4. Compute standard cross-entropy loss (no weighting)
-        
-        Returns:
-            loss: Scalar loss value
+        Compute loss with AGA and Invisible Masking.
         """
-        
-        # ✅ CRITICAL FIXES: Extract BOTH masks from inputs
         labels = inputs.get("labels")
         input_ids = inputs.get("input_ids")
-        attention_mask = inputs.get("attention_mask")  # ✅ For masking padding in attention
-        connector_mask = inputs.get("connector_mask", None)  # ✅ For connector boost
+        attention_mask = inputs.get("attention_mask")
         
-        # ✅ ADAPTIVE GRADIENT AMPLIFICATION (AGA) - Phase 2 Implementation
-        # Instead of a static 1.1x boost, calculate dynamic multipliers based on inverse frequency
-        if connector_mask is not None:
-            # Identify where connectors are located (collator sets them to >1.0)
-            is_connector = (connector_mask > 1.05)
+        # ✅ ADAPTIVE GRADIENT AMPLIFICATION (AGA) & INVISIBLE MASKING
+        connector_mask = None
+        if self.connector_token_ids is not None:
+            self.connector_token_ids = self.connector_token_ids.to(input_ids.device)
+            # Identify where connectors are located WITHOUT needing XML tags
+            is_connector = torch.isin(input_ids, self.connector_token_ids)
             
             if is_connector.any():
-                # Get unique connector token IDs and their frequencies in this batch
                 unique_ids, counts = torch.unique(input_ids[is_connector], return_counts=True)
                 
                 # Base mask of 1.0 (no boost for content words)
-                dynamic_connector_mask = torch.ones_like(connector_mask)
+                connector_mask = torch.ones_like(input_ids, dtype=torch.float)
                 
-                # Apply dynamic boost based on inverse frequency:
-                # boost = 1.0 + min(0.2, alpha / count)
-                # This ensures rare connectors get higher boost (up to 1.2x), common get lower (~1.05x)
+                # Apply dynamic boost based on inverse frequency
                 alpha = 5.0
                 for uid, count in zip(unique_ids, counts):
                     boost_val = 1.0 + min(0.20, alpha / count.item())
-                    dynamic_connector_mask[(input_ids == uid) & is_connector] = boost_val
-                    
-                connector_mask = dynamic_connector_mask
+                    connector_mask[(input_ids == uid) & is_connector] = boost_val
 
         # Debug logging (first batch only)
         if not hasattr(self, '_logged_first_batch'):
             logger.info("\n" + "="*70)
-            logger.info("BATCH DEBUG INFO - WITH AGA")
+            logger.info("BATCH DEBUG INFO - WITH AGA & INVISIBLE MASKING")
             logger.info("="*70)
             logger.info(f"input_ids shape: {input_ids.shape}")
             logger.info(f"attention_mask shape: {attention_mask.shape if attention_mask is not None else 'None'}")
@@ -204,13 +195,12 @@ class ConnectorAwareTrainer(Trainer):
             if connector_mask is not None:
                 max_boost = connector_mask.max().item()
                 logger.info(f"AGA Max Boost in batch: {max_boost:.3f}x")
-                logger.info(f"Boosted tokens (mask>1): {(connector_mask > 1.0).sum().item()}")
+                logger.info(f"Boosted tokens: {(connector_mask > 1.0).sum().item()}")
             
             logger.info("="*70 + "\n")
             self._logged_first_batch = True
         
-        # ✅ Forward pass with BOTH masks. 
-        # Note: connector_mask is now the AGA mask used ONLY in the backward hook!
+        # Forward pass
         logits = model(
             in_idx=input_ids,
             attention_mask=attention_mask,
@@ -409,16 +399,22 @@ class ConnectorPretrainingManager:
         # Create trainer
         logger.info("\nCreating trainer...")
         
+        # Extract all raw connector words from config
+        connector_words = []
+        for category, words in self.config.connector_types.items():
+            connector_words.extend(words)
+            
         self.trainer = ConnectorAwareTrainer(
             model=self.model_handler.model,
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset if eval_dataset else None,
             tokenizer=self.model_handler.tokenizer,
-            data_collator=data_collator
+            data_collator=data_collator,
+            connector_words=connector_words
         )
         
-        logger.info("✓ Trainer created")
+        logger.info("✓ Trainer created with Invisible Masking initialized")
         
         # Summary
         logger.info("\n" + "="*70)
