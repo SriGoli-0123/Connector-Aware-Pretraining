@@ -292,6 +292,60 @@ class DatasetPreparer:
         except Exception as e:
             logger.error(f"✗ Error downloading OpenWebMath: {e}")
             raise
+
+    def download_proofwriter(self) -> Dataset:
+        """Download ProofWriter (Clean Synthetic Logic)."""
+        dataset_name = 'proofwriter'
+        save_path = self.get_dataset_path(dataset_name)
+        
+        if self.dataset_exists(dataset_name):
+            logger.info(f"✓ ProofWriter already downloaded")
+            return load_from_disk(str(save_path))
+            
+        logger.info("\n" + "="*80)
+        logger.info("DOWNLOADING PROOFWRITER (CLEAN LOGIC)")
+        logger.info("="*80 + "\n")
+        
+        try:
+            # We use the 'reasoning' portion of ProofWriter
+            dataset = load_dataset("clarkc/proofwriter", "OWA-depth-5", split="train")
+            # Convert reasoning chain to raw text for pretraining
+            dataset = dataset.map(lambda x: {
+                'text': f"{x['theory']} {x['question']} {x['proof']}",
+                'domain': dataset_name
+            })
+            save_path.mkdir(parents=True, exist_ok=True)
+            dataset.save_to_disk(str(save_path))
+            return dataset
+        except Exception as e:
+            logger.error(f"✗ Error downloading ProofWriter: {e}")
+            raise
+
+    def download_entailmentbank(self) -> Dataset:
+        """Download EntailmentBank (Clean Logical Chains)."""
+        dataset_name = 'entailmentbank'
+        save_path = self.get_dataset_path(dataset_name)
+        
+        if self.dataset_exists(dataset_name):
+            return load_from_disk(str(save_path))
+            
+        logger.info("\n" + "="*80)
+        logger.info("DOWNLOADING ENTAILMENTBANK (CLEAN CHAINS)")
+        logger.info("="*80 + "\n")
+        
+        try:
+            dataset = load_dataset("allenai/entailment_bank", "task_1", split="train")
+            # Flatten reasoning steps into a coherent text sample
+            dataset = dataset.map(lambda x: {
+                'text': f"Facts: {x['context']} Question: {x['question']} Reasoning: {x['explanation']}",
+                'domain': dataset_name
+            })
+            save_path.mkdir(parents=True, exist_ok=True)
+            dataset.save_to_disk(str(save_path))
+            return dataset
+        except Exception as e:
+            logger.error(f"✗ Error downloading EntailmentBank: {e}")
+            raise
     
     def combine_datasets(self) -> Dataset:
         """Combine all downloaded datasets."""
@@ -305,7 +359,7 @@ class DatasetPreparer:
         
         all_datasets = []
         
-        for dataset_name in ['arxiv', 'pubmed', 'legal', 'openwebmath']:
+        for dataset_name in ['arxiv', 'pubmed', 'legal', 'openwebmath', 'proofwriter', 'entailmentbank']:
             path = self.get_dataset_path(dataset_name)
             
             if not path.exists():
@@ -357,7 +411,7 @@ class DatasetPreparer:
         logger.info("DATASET STATUS")
         logger.info("="*80 + "\n")
         
-        for dataset_name in ['arxiv', 'pubmed', 'legal', 'openwebmath']:
+        for dataset_name in ['arxiv', 'pubmed', 'legal', 'openwebmath', 'proofwriter', 'entailmentbank']:
             path = self.get_dataset_path(dataset_name)
             if self.dataset_exists(dataset_name):
                 try:
@@ -410,6 +464,10 @@ def main():
             preparer.download_legal()
         elif command == 'openwebmath':
             preparer.download_openwebmath()
+        elif command == 'proofwriter':
+            preparer.download_proofwriter()
+        elif command == 'entailmentbank':
+            preparer.download_entailmentbank()
         elif command == 'combine':
             preparer.combine_datasets()
         elif command == 'status':
