@@ -170,31 +170,51 @@ class ConnectorAwareTrainer(Trainer):
         attention_mask = inputs.get("attention_mask")  # ✅ For masking padding in attention
         connector_mask = inputs.get("connector_mask", None)  # ✅ For connector boost
         
+        # ✅ ADAPTIVE GRADIENT AMPLIFICATION (AGA) - Phase 2 Implementation
+        # Instead of a static 1.1x boost, calculate dynamic multipliers based on inverse frequency
+        if connector_mask is not None:
+            # Identify where connectors are located (collator sets them to >1.0)
+            is_connector = (connector_mask > 1.05)
+            
+            if is_connector.any():
+                # Get unique connector token IDs and their frequencies in this batch
+                unique_ids, counts = torch.unique(input_ids[is_connector], return_counts=True)
+                
+                # Base mask of 1.0 (no boost for content words)
+                dynamic_connector_mask = torch.ones_like(connector_mask)
+                
+                # Apply dynamic boost based on inverse frequency:
+                # boost = 1.0 + min(0.2, alpha / count)
+                # This ensures rare connectors get higher boost (up to 1.2x), common get lower (~1.05x)
+                alpha = 5.0
+                for uid, count in zip(unique_ids, counts):
+                    boost_val = 1.0 + min(0.20, alpha / count.item())
+                    dynamic_connector_mask[(input_ids == uid) & is_connector] = boost_val
+                    
+                connector_mask = dynamic_connector_mask
+
         # Debug logging (first batch only)
         if not hasattr(self, '_logged_first_batch'):
             logger.info("\n" + "="*70)
-            logger.info("BATCH DEBUG INFO")
+            logger.info("BATCH DEBUG INFO - WITH AGA")
             logger.info("="*70)
             logger.info(f"input_ids shape: {input_ids.shape}")
             logger.info(f"attention_mask shape: {attention_mask.shape if attention_mask is not None else 'None'}")
-            logger.info(f"connector_mask shape: {connector_mask.shape if connector_mask is not None else 'None'}")
-            logger.info(f"labels shape: {labels.shape if labels is not None else 'None'}")
             
-            if attention_mask is not None:
-                logger.info(f"Valid tokens (attention_mask=1): {(attention_mask == 1).sum().item()}")
-            if labels is not None:
-                logger.info(f"Valid labels (not -100): {(labels != -100).sum().item()}")
             if connector_mask is not None:
+                max_boost = connector_mask.max().item()
+                logger.info(f"AGA Max Boost in batch: {max_boost:.3f}x")
                 logger.info(f"Boosted tokens (mask>1): {(connector_mask > 1.0).sum().item()}")
             
             logger.info("="*70 + "\n")
             self._logged_first_batch = True
         
-        # ✅ CRITICAL: Forward pass with BOTH masks
+        # ✅ Forward pass with BOTH masks. 
+        # Note: connector_mask is now the AGA mask used ONLY in the backward hook!
         logits = model(
             in_idx=input_ids,
-            attention_mask=attention_mask,  # ← For masking padding in attention
-            connector_mask=connector_mask   # ← For connector boost
+            attention_mask=attention_mask,
+            connector_mask=connector_mask
         )
         
         # Standard cross-entropy loss (Approach 1 - no weighting)

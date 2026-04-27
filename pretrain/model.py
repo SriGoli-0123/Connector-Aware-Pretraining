@@ -310,13 +310,17 @@ class Llama3Model(nn.Module):
         # Get embeddings
         x = self.token_emb(in_idx)  # (batch_size, seq_len, emb_dim)
         
-        # ✅ APPLY CONNECTOR BOOST (if provided)
-        if connector_mask is not None:
-            # connector_mask: (batch_size, seq_len) with values 1.0 or 1.1
-            # Expand to match embedding dimension: (batch_size, seq_len, 1)
-            boost = connector_mask.unsqueeze(-1)
-            # Apply element-wise multiplication: 1.0× for normal tokens, 1.1× for connectors
-            x = x * boost
+        # ✅ ADAPTIVE GRADIENT AMPLIFICATION (AGA) - Backward Pass Only
+        # Instead of 'hard-coding' the logic into the forward pass (which causes 
+        # residual dampening and MMLU failure), we scale the learning signal.
+        if connector_mask is not None and x.requires_grad:
+            def aga_backward_hook(grad):
+                # connector_mask contains the dynamic gradient multipliers
+                # (e.g., 1.0 for content words, 1.05-1.20 for logical connectors)
+                boost = connector_mask.unsqueeze(-1)
+                return grad * boost
+            
+            x.register_hook(aga_backward_hook)
         
         # Get positional embeddings
         cos, sin = self.rope_emb(seq_len, in_idx.device)

@@ -288,21 +288,17 @@ def detect_connectors_in_text(text: str, detector=None) -> List[Dict]:
 
 def tag_text(text: str) -> Dict:
     """
-    Tag text with connector markers in EXACT format.
+    Analyzes text for connectors without adding XML tags.
     
-    Format: <connector type="X"> word </connector>
-    
-    This is the CORE of CRD preprocessing. Tags enable:
-    1. Exact identification of connectors during tokenization
-    2. Building of connector_mask for attention weighting
-    3. Type information for model to learn relative importance
+    This replaces the old XML tagging system to prevent OOD distribution shift.
+    The text remains completely raw and un-augmented.
     
     Args:
         text: Raw input text
     
     Returns:
         Dict with:
-        - tagged_text: Text with exact format tags
+        - tagged_text: The original raw text (unmodified)
         - connector_positions: List of character positions
         - connector_types: List of category names (UPPERCASE)
         - connector_words: List of actual connector strings
@@ -311,25 +307,8 @@ def tag_text(text: str) -> Dict:
     
     matches = detect_connectors(text)
     
-    # Apply tags in reverse order to preserve positions
-    tagged = text
-    matches_reversed = list(reversed(matches))
-    
-    for match in matches_reversed:
-        category = match['category'].upper()  # UPPERCASE for exact format
-        word = match['word']
-        start = match['start']
-        end = match['end']
-        
-        # EXACT FORMAT: <connector type="X"> word </connector>
-        tag_open = f'<connector type="{category}">'
-        tag_close = '</connector>'
-        replacement = f"{tag_open} {word} {tag_close}"
-        
-        tagged = tagged[:start] + replacement + tagged[end:]
-    
     return {
-        'tagged_text': tagged,
+        'tagged_text': text,  # Return unmodified raw text!
         'connector_positions': [m['start'] for m in matches],
         'connector_types': [m['category'].upper() for m in matches],
         'connector_words': [m['word'] for m in matches],
