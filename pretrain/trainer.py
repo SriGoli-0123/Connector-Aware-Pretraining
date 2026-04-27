@@ -158,78 +158,62 @@ class ConnectorAwareTrainer(Trainer):
         logger.info("✓ Disabled HF integration callbacks for custom model compatibility")
     
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """
-        Compute loss with AGA and Invisible Masking.
-        """
         labels = inputs.get("labels")
         input_ids = inputs.get("input_ids")
         attention_mask = inputs.get("attention_mask")
         
-        # ✅ ADAPTIVE GRADIENT AMPLIFICATION (AGA) & INVISIBLE MASKING
-        connector_mask = None
+        logits = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+        ).logits
+        
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        
+        # Calculate base per-token loss
+        loss_fct = nn.CrossEntropyLoss(reduction='none')
+        per_token_loss = loss_fct(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1)
+        ).view(shift_labels.size())
+        
+        # RL Pretraining Objective: Reward-Weighted Cross-Entropy
+        # Models receive higher 'reward' (loss weight) for logical sequences
+        reward_weights = torch.ones_like(per_token_loss)
+        
         if self.connector_token_ids is not None:
             self.connector_token_ids = self.connector_token_ids.to(input_ids.device)
-            # Identify where connectors are located WITHOUT needing XML tags
-            is_connector = torch.isin(input_ids, self.connector_token_ids)
+            # Identify connectors in the shifted targets
+            is_connector = torch.isin(shift_labels, self.connector_token_ids)
             
             if is_connector.any():
-                unique_ids, counts = torch.unique(input_ids[is_connector], return_counts=True)
-                
-                # Base mask of 1.0 (no boost for content words)
-                connector_mask = torch.ones_like(input_ids, dtype=torch.float)
-                
-                # Apply dynamic boost based on inverse frequency
+                unique_ids, counts = torch.unique(shift_labels[is_connector], return_counts=True)
                 alpha = 5.0
+                
+                # Apply base logical reward based on rarity
                 for uid, count in zip(unique_ids, counts):
-                    boost_val = 1.0 + min(0.20, alpha / count.item())
-                    connector_mask[(input_ids == uid) & is_connector] = boost_val
+                    reward_val = 1.0 + min(0.20, alpha / count.item())
+                    reward_weights[(shift_labels == uid)] = reward_val
+                
+                # Propagate reward to the subsequent reasoning chain (Sequence Rewarding)
+                decay_factor = 0.8
+                chain_length = 5
+                
+                base_reward = reward_weights.clone()
+                for i in range(1, chain_length + 1):
+                    shifted_reward = torch.roll(base_reward, shifts=i, dims=1)
+                    shifted_reward[:, :i] = 1.0
+                    reward_weights = torch.max(reward_weights, shifted_reward * (decay_factor ** i))
 
-        # Debug logging (first batch only)
-        if not hasattr(self, '_logged_first_batch'):
-            logger.info("\n" + "="*70)
-            logger.info("BATCH DEBUG INFO - WITH AGA & INVISIBLE MASKING")
-            logger.info("="*70)
-            logger.info(f"input_ids shape: {input_ids.shape}")
-            logger.info(f"attention_mask shape: {attention_mask.shape if attention_mask is not None else 'None'}")
-            
-            if connector_mask is not None:
-                max_boost = connector_mask.max().item()
-                logger.info(f"AGA Max Boost in batch: {max_boost:.3f}x")
-                logger.info(f"Boosted tokens: {(connector_mask > 1.0).sum().item()}")
-            
-            logger.info("="*70 + "\n")
-            self._logged_first_batch = True
+        # Mask out padding tokens
+        valid_mask = (shift_labels != -100).float()
+        weighted_loss = per_token_loss * reward_weights * valid_mask
         
-        # Forward pass
-        logits = model(
-            in_idx=input_ids,
-            attention_mask=attention_mask,
-            connector_mask=connector_mask
-        )
-        
-        # Standard cross-entropy loss (Approach 1 - no weighting)
-        if labels is not None:
-            # Shift for next-token prediction (causal language modeling)
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            
-            # Standard CE loss
-            loss = F.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1),
-                ignore_index=-100  # ← Ignore padding positions
-            )
-        else:
-            # Fallback if no labels (shouldn't happen)
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                input_ids.view(-1),
-                ignore_index=-100
-            )
+        final_loss = weighted_loss.sum() / valid_mask.sum()
         
         if return_outputs:
-            return loss, {"logits": logits}
-        return loss
+            return final_loss, {"logits": logits}
+        return final_loss
 
 
 # ============================================================================

@@ -288,19 +288,13 @@ class Llama3Model(nn.Module):
     
     def forward(self, 
                 in_idx: torch.Tensor, 
-                attention_mask: Optional[torch.Tensor] = None,
-                connector_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+                attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        Forward pass with BOTH masks.
-        
-        ✅ CRITICAL: Now accepts attention_mask AND connector_mask
-        ✅ attention_mask: Masks padding in attention (0 for padding, 1 for real)
-        ✅ connector_mask: Boosts connector embeddings (1.0 normal, 1.1 boosted)
+        Forward pass with attention masking.
         
         Args:
             in_idx: Input token IDs (batch_size, seq_len)
             attention_mask: Padding mask (batch_size, seq_len) - 1 for real, 0 for padding
-            connector_mask: Connector boost mask (batch_size, seq_len) - 1.0 or 1.1
         
         Returns:
             logits: Model output (batch_size, seq_len, vocab_size)
@@ -309,18 +303,6 @@ class Llama3Model(nn.Module):
         
         # Get embeddings
         x = self.token_emb(in_idx)  # (batch_size, seq_len, emb_dim)
-        
-        # ✅ ADAPTIVE GRADIENT AMPLIFICATION (AGA) - Backward Pass Only
-        # Instead of 'hard-coding' the logic into the forward pass (which causes 
-        # residual dampening and MMLU failure), we scale the learning signal.
-        if connector_mask is not None and x.requires_grad:
-            def aga_backward_hook(grad):
-                # connector_mask contains the dynamic gradient multipliers
-                # (e.g., 1.0 for content words, 1.05-1.20 for logical connectors)
-                boost = connector_mask.unsqueeze(-1)
-                return grad * boost
-            
-            x.register_hook(aga_backward_hook)
         
         # Get positional embeddings
         cos, sin = self.rope_emb(seq_len, in_idx.device)
