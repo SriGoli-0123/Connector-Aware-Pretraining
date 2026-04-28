@@ -356,14 +356,35 @@ class DatasetPreparer:
         logger.info("="*80 + "\n")
         
         try:
-            dataset = load_dataset("allenai/entailment_bank", "task_1", split="train")
-            # Flatten reasoning steps into a coherent text sample
-            dataset = dataset.map(lambda x: {
-                'text': f"Facts: {x['context']} Question: {x['question']} Reasoning: {x['explanation']}",
-                'domain': dataset_name
-            })
-            save_path.mkdir(parents=True, exist_ok=True)
+            # Use tasksource/entailment_bank as the reliable Hub path
+            dataset = load_dataset("tasksource/entailment_bank", split="train")
+            
+            from transformers import AutoTokenizer
+            from connector_detector import ConnectorDetector
+            from config import Config
+            
+            cfg = Config()
+            tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
+            detector = ConnectorDetector()
+            
+            def format_and_mask(x):
+                # EntailmentBank format: context + hypothesis
+                text = f"Context: {x['context']}\nHypothesis: {x['hypothesis']}"
+                encoding = tokenizer(text, max_length=512, truncation=True, return_offsets_mapping=True)
+                
+                # Generate the "Ghost Mask" (Token-level binary mask)
+                connector_mask = detector.generate_connector_mask(text, tokenizer, max_length=512)
+                
+                return {
+                    "input_ids": encoding["input_ids"],
+                    "attention_mask": encoding["attention_mask"],
+                    "connector_mask": connector_mask.tolist(),
+                    "domain": "entailmentbank"
+                }
+            
+            dataset = dataset.map(format_and_mask, remove_columns=dataset.column_names, num_proc=1)
             dataset.save_to_disk(str(save_path))
+            logger.info(f"✓ Saved EntailmentBank with Ghost Masking to {save_path}")
             return dataset
         except Exception as e:
             logger.error(f"✗ Error downloading EntailmentBank: {e}")
