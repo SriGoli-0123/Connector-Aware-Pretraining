@@ -501,6 +501,9 @@ def main():
         print("  python prepare_datasets.py pubmed         # Download PubMed")
         print("  python prepare_datasets.py legal          # Download Legal")
         print("  python prepare_datasets.py openwebmath    # Download OpenWebMath")
+        print("  python prepare_datasets.py proofwriter    # Download ProofWriter")
+        print("  python prepare_datasets.py entailmentbank # Download EntailmentBank")
+        print("  python prepare_datasets.py all            # Download everything")
         print("  python prepare_datasets.py combine        # Combine all datasets")
         print("  python prepare_datasets.py status         # Show download status\n")
         sys.exit(1)
@@ -525,6 +528,15 @@ def main():
             preparer.combine_datasets()
         elif command == 'status':
             preparer.status()
+        elif command == 'all':
+            logger.info("Starting batch download of all datasets...")
+            preparer.download_arxiv()
+            preparer.download_pubmed()
+            preparer.download_legal()
+            preparer.download_openwebmath()
+            preparer.download_proofwriter()
+            preparer.download_entailmentbank()
+            logger.info("✓ All datasets downloaded successfully!")
         else:
             logger.error(f"Unknown command: {command}")
             sys.exit(1)
