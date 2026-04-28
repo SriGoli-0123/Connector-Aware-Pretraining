@@ -311,8 +311,11 @@ class DatasetPreparer:
             dataset = load_dataset("tasksource/proofwriter", split="train")
             
             from transformers import AutoTokenizer
-            from utils.connector_detector import ConnectorDetector
-            from utils.config import Config
+            # Add parent directory to path so we can import from the root if needed
+            sys.path.append(str(Path(__file__).parent.parent))
+            
+            from connector_detector import ConnectorDetector
+            from config import Config
             
             cfg = Config()
             tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
@@ -332,7 +335,7 @@ class DatasetPreparer:
                     "domain": "proofwriter"
                 }
             
-            dataset = dataset.map(format_and_mask, remove_columns=dataset.column_names, num_proc=4)
+            dataset = dataset.map(format_and_mask, remove_columns=dataset.column_names, num_proc=1) # num_proc=1 for safety
             dataset.save_to_disk(str(save_path))
             logger.info(f"✓ Saved ProofWriter with Ghost Masking to {save_path}")
             return dataset
