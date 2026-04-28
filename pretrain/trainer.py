@@ -448,15 +448,28 @@ class ConnectorPretrainingManager:
         self.model_handler.tokenizer.save_pretrained(output_dir)
         logger.info("✓ Model saved")
 
-
+if __name__ == "__main__":
+    from config import Config
+    from model import ModelHandler
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    cfg = Config()
+    handler = ModelHandler(cfg.model_name)
+    
+    logger.info("="*70)
+    logger.info("STARTING CONNECTOR-AWARE PRETRAINING")
     logger.info("="*70)
     
     # 1. Prepare Trainer
-    orchestrator = PretrainingOrchestrator()
-    orchestrator.prepare_trainer()
+    manager = ConnectorPretrainingManager(cfg, handler)
+    manager.prepare_trainer()
     
     # 2. Run Training
-    orchestrator.train()
+    manager.train()
     
     # 3. Save Final Model
-    orchestrator.save_model()
+    manager.save_model()
