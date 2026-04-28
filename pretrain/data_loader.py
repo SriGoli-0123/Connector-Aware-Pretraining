@@ -141,8 +141,12 @@ class ConnectorDataCollatorWithMaskCreation:
         batch_size = len(batch)
         mask = torch.ones((batch_size, max_len), dtype=torch.float32)
         
+        # Get all special token IDs to exclude them from boosting
+        special_token_ids = set(self.tokenizer.all_special_ids)
+        
         for i, item in enumerate(batch):
             conn_mask = item.get("connector_mask", [])
+            input_ids = item.get("input_ids", [])
             if not conn_mask:
                 continue
                 
@@ -150,8 +154,13 @@ class ConnectorDataCollatorWithMaskCreation:
             curr_mask = torch.tensor(conn_mask, dtype=torch.float32)
             length = min(len(curr_mask), max_len)
             
+            # SAFETY GATE: Zero out boost for any special tokens
+            # This ensures BOS, EOS, and PAD never receive a logical boost
+            for j in range(length):
+                if input_ids[j] in special_token_ids:
+                    curr_mask[j] = 0.0
+            
             # Apply Ghost Mask (1.0 for normal, boost_factor for connectors)
-            # Pre-saved mask is 0/1, convert to 1.0/boost_factor
             mask[i, :length] = 1.0 + (curr_mask[:length] * (self.boost_factor - 1.0))
             
         return mask
