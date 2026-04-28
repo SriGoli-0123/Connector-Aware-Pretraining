@@ -182,20 +182,22 @@ class ConnectorAwareTrainer(Trainer):
         # Models receive higher 'reward' (loss weight) for logical sequences
         reward_weights = torch.ones_like(per_token_loss)
         
-        if self.connector_token_ids is not None:
+        # Priority 1: Use provided Ghost Mask (connector_mask)
+        # Priority 2: Use dynamic first-token identification
+        connector_mask = inputs.get("connector_mask")
+        if connector_mask is not None:
+            # Shift mask to match logits (mask is on input_ids, reward is on next-token prediction)
+            is_connector = connector_mask[..., :-1].contiguous().bool()
+        elif self.connector_token_ids is not None:
             self.connector_token_ids = self.connector_token_ids.to(input_ids.device)
-            # Identify connectors in the shifted targets
             is_connector = torch.isin(shift_labels, self.connector_token_ids)
+        else:
+            is_connector = torch.zeros_like(shift_labels, dtype=torch.bool)
             
-            if is_connector.any() and getattr(self.rl_config, 'use_reward_weighting', True):
-                unique_ids, counts = torch.unique(shift_labels[is_connector], return_counts=True)
-                alpha = getattr(self.rl_config, 'base_reward_alpha', 5.0)
-                
-                # Apply base logical reward based on rarity
-                for uid, count in zip(unique_ids, counts):
-                    reward_val = 1.0 + min(0.20, alpha / count.item())
-                    reward_weights[(shift_labels == uid)] = reward_val
-                
+        if is_connector.any() and getattr(self.rl_config, 'use_reward_weighting', True):
+            # Apply base logical reward
+            # Connectors themselves get a 1.2x boost
+            reward_weights[is_connector] = 1.20                
                 # Propagate reward to the subsequent reasoning chain (Sequence Rewarding)
                 decay_factor = getattr(self.rl_config, 'reward_decay_factor', 0.8)
                 chain_length = getattr(self.rl_config, 'reward_chain_length', 5)

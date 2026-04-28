@@ -294,28 +294,47 @@ class DatasetPreparer:
             raise
 
     def download_proofwriter(self) -> Dataset:
-        """Download ProofWriter (Clean Synthetic Logic)."""
+        """Download ProofWriter dataset."""
         dataset_name = 'proofwriter'
         save_path = self.get_dataset_path(dataset_name)
         
         if self.dataset_exists(dataset_name):
-            logger.info(f"✓ ProofWriter already downloaded")
+            logger.info(f"✓ ProofWriter already downloaded at {save_path}")
             return load_from_disk(str(save_path))
-            
+        
         logger.info("\n" + "="*80)
         logger.info("DOWNLOADING PROOFWRITER (CLEAN LOGIC)")
         logger.info("="*80 + "\n")
         
         try:
-            # We use the 'reasoning' portion of ProofWriter
-            dataset = load_dataset("clarkc/proofwriter", "OWA-depth-5", split="train")
-            # Convert reasoning chain to raw text for pretraining
-            dataset = dataset.map(lambda x: {
-                'text': f"{x['theory']} {x['question']} {x['proof']}",
-                'domain': dataset_name
-            })
-            save_path.mkdir(parents=True, exist_ok=True)
+            # Use tasksource/proofwriter as the reliable Hub path
+            dataset = load_dataset("tasksource/proofwriter", split="train")
+            
+            from transformers import AutoTokenizer
+            from utils.connector_detector import ConnectorDetector
+            from utils.config import Config
+            
+            cfg = Config()
+            tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
+            detector = ConnectorDetector()
+            
+            def format_and_mask(x):
+                text = f"Context: {x['theory']}\nQuestion: {x['question']}\nAnswer: {x['answer']}"
+                encoding = tokenizer(text, max_length=512, truncation=True, return_offsets_mapping=True)
+                
+                # Generate the "Ghost Mask" (Token-level binary mask)
+                connector_mask = detector.generate_connector_mask(text, tokenizer, max_length=512)
+                
+                return {
+                    "input_ids": encoding["input_ids"],
+                    "attention_mask": encoding["attention_mask"],
+                    "connector_mask": connector_mask.tolist(),
+                    "domain": "proofwriter"
+                }
+            
+            dataset = dataset.map(format_and_mask, remove_columns=dataset.column_names, num_proc=4)
             dataset.save_to_disk(str(save_path))
+            logger.info(f"✓ Saved ProofWriter with Ghost Masking to {save_path}")
             return dataset
         except Exception as e:
             logger.error(f"✗ Error downloading ProofWriter: {e}")

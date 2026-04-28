@@ -286,29 +286,52 @@ def detect_connectors_in_text(text: str, detector=None) -> List[Dict]:
 # TEXT TAGGING - EXACT FORMAT
 # ============================================================================
 
+    def generate_connector_mask(self, text: str, tokenizer, max_length: int = 2048) -> torch.Tensor:
+        """
+        Generates a token-level binary mask for connectors (Ghost Masking).
+        
+        This perfectly replicates the benefit of XML tags (capturing multi-word 
+        connectors as a unit) without actually modifying the text.
+        
+        Args:
+            text: Raw input text
+            tokenizer: HF Tokenizer
+            max_length: Max sequence length
+            
+        Returns:
+            torch.Tensor: Binary mask (1 for connector token, 0 otherwise)
+        """
+        import torch
+        
+        matches = detect_connectors(text)
+        encoding = tokenizer(text, max_length=max_length, truncation=True, return_offsets_mapping=True)
+        offsets = encoding['offset_mapping']
+        
+        mask = torch.zeros(len(offsets), dtype=torch.float)
+        
+        for match in matches:
+            start_char, end_char = match['start'], match['end']
+            
+            # Map character spans to token indices
+            for i, (token_start, token_end) in enumerate(offsets):
+                # If the token overlaps with the connector character span
+                if token_start >= start_char and token_end <= end_char and (token_end > token_start):
+                    mask[i] = 1.0
+        
+        return mask
+
 def tag_text(text: str) -> Dict:
     """
     Analyzes text for connectors without adding XML tags.
     
     This replaces the old XML tagging system to prevent OOD distribution shift.
     The text remains completely raw and un-augmented.
-    
-    Args:
-        text: Raw input text
-    
-    Returns:
-        Dict with:
-        - tagged_text: The original raw text (unmodified)
-        - connector_positions: List of character positions
-        - connector_types: List of category names (UPPERCASE)
-        - connector_words: List of actual connector strings
-        - connector_confidences: List of confidence scores
     """
     
     matches = detect_connectors(text)
     
     return {
-        'tagged_text': text,  # Return unmodified raw text!
+        'tagged_text': text,
         'connector_positions': [m['start'] for m in matches],
         'connector_types': [m['category'].upper() for m in matches],
         'connector_words': [m['word'] for m in matches],

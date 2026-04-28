@@ -127,88 +127,33 @@ class ConnectorDataCollatorWithMaskCreation:
         
         return []
     
-    def _create_boost_mask(self, input_ids, connector_types_mapping=None):
+    def _create_boost_mask(self, batch: List[Dict], max_len: int) -> torch.Tensor:
         """
-        ✅ FIXED V2: Create connector boost mask WITHOUT boosting tags.
-        
-        Algorithm:
-        1. Scan input_ids for connector opening tags
-        2. When found, SKIP the opening tag (don't boost it)
-        3. Boost all tokens AFTER opening tag
-        4. When closing tag found, STOP (don't boost closing tag)
-        5. All other tokens marked 1.0
-        
-        Example:
-            Tokens: [... <opener> word1 word2 </closer> ...]
-            Boost:  [... 1.0      1.1   1.1   1.0      ...]
-                         ↑ skip        boost    ↑ skip
+        Retrieves the pre-calculated Ghost Mask from the batch.
         
         Args:
-            input_ids: Tensor of shape (batch_size, seq_len)
-            connector_types_mapping: Optional dict (not used, for future)
-        
+            batch: List of dataset items
+            max_len: Target sequence length
+            
         Returns:
-            mask: Tensor of shape (batch_size, seq_len) with values 1.0 or boost_factor
+            torch.Tensor: Combined connector mask for the batch
         """
-        # Handle both tensor and list inputs
-        if isinstance(input_ids, torch.Tensor):
-            batch_size, seq_len = input_ids.shape
-            input_ids_list = input_ids.tolist()
-        elif isinstance(input_ids, list):
-            batch_size = len(input_ids)
-            seq_len = len(input_ids[0]) if input_ids else 1
-            input_ids_list = input_ids
-        else:
-            return torch.ones((1, 1), dtype=torch.float32)
+        batch_size = len(batch)
+        mask = torch.ones((batch_size, max_len), dtype=torch.float32)
         
-        # Initialize mask: all 1.0 (no boosting)
-        mask = torch.ones((batch_size, seq_len), dtype=torch.float32)
-        
-        # ✅ CONNECTOR TOKEN IDS
-        CONNECTOR_TAG_IDS = {
-            128257: 'CAUSAL',
-            128258: 'ADVERSATIVE',
-            128259: 'TEMPORAL',
-            128260: 'CONDITIONAL',
-            128261: 'CONCLUSIVE',
-            128262: 'ADDITIVE',
-        }
-        
-        CLOSING_TAG_ID = 128263
-        
-        # Use dynamically detected tags if available
-        if self.connector_opening_tags:
-            opening_tags = self.connector_opening_tags
-            closing_tag = self.connector_closing_tag_id
-        else:
-            opening_tags = set(CONNECTOR_TAG_IDS.keys())
-            closing_tag = CLOSING_TAG_ID
-        
-        # Process each sequence in batch
-        for batch_idx, seq in enumerate(input_ids_list):
-            i = 0
-            while i < len(seq):
-                token_id = seq[i]
+        for i, item in enumerate(batch):
+            conn_mask = item.get("connector_mask", [])
+            if not conn_mask:
+                continue
                 
-                # Check if this is a connector opening tag
-                if token_id in opening_tags:
-                    # ✅ FIX: DON'T boost the opening tag itself
-                    # Move to next token (first content word)
-                    i += 1
-                    
-                    # ✅ FIX: Boost tokens BETWEEN tags (not including closing tag)
-                    while i < len(seq):
-                        # Check if we've reached the closing tag
-                        if seq[i] == closing_tag:
-                            # DON'T boost the closing tag
-                            break
-                        
-                        # Boost this content word
-                        mask[batch_idx, i] = self.boost_factor
-                        i += 1
-                
-                i += 1
-        
+            # Convert to float and pad/truncate
+            curr_mask = torch.tensor(conn_mask, dtype=torch.float32)
+            length = min(len(curr_mask), max_len)
+            
+            # Apply Ghost Mask (1.0 for normal, boost_factor for connectors)
+            # Pre-saved mask is 0/1, convert to 1.0/boost_factor
+            mask[i, :length] = 1.0 + (curr_mask[:length] * (self.boost_factor - 1.0))
+            
         return mask
     
     def __call__(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
@@ -276,8 +221,8 @@ class ConnectorDataCollatorWithMaskCreation:
         labels = input_ids_tensor.clone()
         labels[attention_mask_tensor == 0] = -100  # Exclude padding from loss
         
-        # ✅ CREATE CONNECTOR MASK (with fixed logic)
-        connector_mask = self._create_boost_mask(input_ids_tensor)
+        # ✅ CREATE CONNECTOR MASK (from pre-calculated Ghost Masks)
+        connector_mask = self._create_boost_mask(batch, max_len)
         
         # ✅ ENSURE connector_mask doesn't boost padding
         # Set connector_mask = 1.0 where attention_mask = 0
