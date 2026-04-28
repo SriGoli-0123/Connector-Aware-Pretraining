@@ -449,20 +449,14 @@ class ConnectorPretrainingManager:
         logger.info("✓ Model saved")
 
 
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    logger.info("="*70)
     
-    logger.info("="*70)
-    logger.info("Trainer module - FINAL FIXED VERSION")
-    logger.info("="*70)
-    logger.info("Fixes:")
-    logger.info("  ✅ attention_mask extraction and passing")
-    logger.info("  ✅ connector_mask extraction and passing")
-    logger.info("  ✅ Uses data_loader_FIXED_V3.py (no duplication)")
-    logger.info("  ✅ Standard cross-entropy loss (Approach 1)")
-    logger.info("  ✅ Padding validation enabled")
-    logger.info("  ✅ THREE masks working together!")
-    logger.info("="*70)
+    # 1. Prepare Trainer
+    orchestrator = PretrainingOrchestrator()
+    orchestrator.prepare_trainer()
+    
+    # 2. Run Training
+    orchestrator.train()
+    
+    # 3. Save Final Model
+    orchestrator.save_model()
