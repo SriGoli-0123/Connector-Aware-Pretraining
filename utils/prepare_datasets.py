@@ -373,8 +373,13 @@ class DatasetPreparer:
             detector = ConnectorDetector()
             
             def format_and_mask(x):
-                # ariesutiono version columns: context, question, explanation
-                text = f"Context: {x['context']}\nQuestion: {x['question']}\nReasoning: {x['explanation']}"
+                # Flexible key detection for EntailmentBank variants
+                context = x.get('context', '')
+                question = x.get('question', x.get('question_text', ''))
+                # Prefer 'explanation' (the reasoning), fallback to 'hypothesis' (the conclusion)
+                reasoning = x.get('explanation', x.get('hypothesis', ''))
+                
+                text = f"Context: {context}\nQuestion: {question}\nReasoning: {reasoning}"
                 encoding = tokenizer(text, max_length=512, truncation=True, return_offsets_mapping=True)
                 
                 # Generate the "Ghost Mask" (Token-level binary mask)
