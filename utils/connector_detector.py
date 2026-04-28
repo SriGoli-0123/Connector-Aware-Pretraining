@@ -286,39 +286,6 @@ def detect_connectors_in_text(text: str, detector=None) -> List[Dict]:
 # TEXT TAGGING - EXACT FORMAT
 # ============================================================================
 
-    def generate_connector_mask(self, text: str, tokenizer, max_length: int = 2048) -> torch.Tensor:
-        """
-        Generates a token-level binary mask for connectors (Ghost Masking).
-        
-        This perfectly replicates the benefit of XML tags (capturing multi-word 
-        connectors as a unit) without actually modifying the text.
-        
-        Args:
-            text: Raw input text
-            tokenizer: HF Tokenizer
-            max_length: Max sequence length
-            
-        Returns:
-            torch.Tensor: Binary mask (1 for connector token, 0 otherwise)
-        """
-        import torch
-        
-        matches = detect_connectors(text)
-        encoding = tokenizer(text, max_length=max_length, truncation=True, return_offsets_mapping=True)
-        offsets = encoding['offset_mapping']
-        
-        mask = torch.zeros(len(offsets), dtype=torch.float)
-        
-        for match in matches:
-            start_char, end_char = match['start'], match['end']
-            
-            # Map character spans to token indices
-            for i, (token_start, token_end) in enumerate(offsets):
-                # If the token overlaps with the connector character span
-                if token_start >= start_char and token_end <= end_char and (token_end > token_start):
-                    mask[i] = 1.0
-        
-        return mask
 
 def tag_text(text: str) -> Dict:
     """
@@ -367,6 +334,25 @@ class ConnectorDetector:
             category: re.compile('|'.join(pattern_list), re.IGNORECASE)
             for category, pattern_list in patterns.items()
         }
+    
+    def generate_connector_mask(self, text: str, tokenizer, max_length: int = 2048):
+        """Generates a token-level binary mask for connectors (Ghost Masking)."""
+        import torch
+        
+        matches = detect_connectors(text)
+        encoding = tokenizer(text, max_length=max_length, truncation=True, return_offsets_mapping=True)
+        offsets = encoding['offset_mapping']
+        
+        mask = torch.zeros(len(offsets), dtype=torch.float)
+        
+        for match in matches:
+            start_char, end_char = match['start'], match['end']
+            
+            for i, (token_start, token_end) in enumerate(offsets):
+                if token_start >= start_char and token_end <= end_char and (token_end > token_start):
+                    mask[i] = 1.0
+        
+        return mask
     
     def detect_in_text(self, text: str) -> List[Dict]:
         """Detect connectors in text."""
