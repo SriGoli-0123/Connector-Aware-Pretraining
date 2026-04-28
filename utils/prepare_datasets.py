@@ -356,8 +356,8 @@ class DatasetPreparer:
         logger.info("="*80 + "\n")
         
         try:
-            # Use tasksource/entailment_bank as the reliable Hub path
-            dataset = load_dataset("tasksource/entailment_bank", split="train")
+            # Use ariesutiono/entailment-bank-v3 as the reliable Hub path
+            dataset = load_dataset("ariesutiono/entailment-bank-v3", split="train")
             
             from transformers import AutoTokenizer
             from connector_detector import ConnectorDetector
@@ -368,8 +368,8 @@ class DatasetPreparer:
             detector = ConnectorDetector()
             
             def format_and_mask(x):
-                # EntailmentBank format: context + hypothesis
-                text = f"Context: {x['context']}\nHypothesis: {x['hypothesis']}"
+                # ariesutiono version columns: context, question, explanation
+                text = f"Context: {x['context']}\nQuestion: {x['question']}\nReasoning: {x['explanation']}"
                 encoding = tokenizer(text, max_length=512, truncation=True, return_offsets_mapping=True)
                 
                 # Generate the "Ghost Mask" (Token-level binary mask)
