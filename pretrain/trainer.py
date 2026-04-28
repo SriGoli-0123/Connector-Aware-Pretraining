@@ -198,15 +198,15 @@ class ConnectorAwareTrainer(Trainer):
             # Apply base logical reward
             # Connectors themselves get a 1.2x boost
             reward_weights[is_connector] = 1.20                
-                # Propagate reward to the subsequent reasoning chain (Sequence Rewarding)
-                decay_factor = getattr(self.rl_config, 'reward_decay_factor', 0.8)
-                chain_length = getattr(self.rl_config, 'reward_chain_length', 5)
-                
-                base_reward = reward_weights.clone()
-                for i in range(1, chain_length + 1):
-                    shifted_reward = torch.roll(base_reward, shifts=i, dims=1)
-                    shifted_reward[:, :i] = 1.0
-                    reward_weights = torch.max(reward_weights, shifted_reward * (decay_factor ** i))
+            # Propagate reward to the subsequent reasoning chain (Sequence Rewarding)
+            decay_factor = getattr(self.rl_config, 'reward_decay_factor', 0.8)
+            chain_length = getattr(self.rl_config, 'reward_chain_length', 5)
+            
+            base_reward = reward_weights.clone()
+            for i in range(1, chain_length + 1):
+                shifted_reward = torch.roll(base_reward, shifts=i, dims=1)
+                shifted_reward[:, :i] = 1.0
+                reward_weights = torch.max(reward_weights, shifted_reward * (decay_factor ** i))
 
         # Mask out padding tokens
         valid_mask = (shift_labels != -100).float()
