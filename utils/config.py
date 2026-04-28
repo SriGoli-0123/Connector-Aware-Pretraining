@@ -238,11 +238,13 @@ _default_config = Config()
 BASE_MODEL = _default_config.model_name
 CHECKPOINT_DIR = _default_config.checkpoint_dir
 
-# Backward compatibility for prepare_datasets.py
+# Backward compatibility for legacy scripts
 COMBINED_DATASET_PATH = _default_config.combined_dataset_path
 BATCH_SIZE = _default_config.batch_size
 NUM_WORKERS = _default_config.num_workers
 DATASETS = {} # Dummy to fix import error
+CONNECTOR_PATTERNS = _default_config.connector_types
+TAG_FORMAT = "" # Legacy tag format dummy
 
 
 def get_connector_types() -> List[str]:
