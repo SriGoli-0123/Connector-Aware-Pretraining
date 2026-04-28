@@ -1,30 +1,29 @@
-# Connector-Aware Pretraining (Phase 2: AGA)
+# Connector-Aware Pretraining (Phase 3: Implicit RL)
 
-This repository contains the implementation of **Connector-Aware Pretraining**, an optimization strategy designed to improve multi-step logical reasoning in Large Language Models (LLMs) by counteracting "Gradient Starvation" of sparse discourse connectors.
+This repository implements **Model-Agnostic Implicit Reinforcement Learning** for improving multi-step logical reasoning in Large Language Models (LLMs). It solves the "Gradient Starvation" of logical connectors without resorting to fragile structural hacks.
 
-## 🚀 Phase 2 Upgrades: Adaptive Gradient Amplification (AGA)
+## 🚀 Phase 3 Upgrades: Reward-Weighted Cross-Entropy
 
-We have officially migrated from the "Phase 1: XML Tagging" approach to a highly mathematically sound **Phase 2: AGA** methodology.
+We have successfully migrated past architectural hooks and XML tagging into a pure, model-agnostic **Reinforcement Learning Pretraining Objective (RLP)**.
 
-### The Problem with Phase 1 (XML Tagging)
-Initially, we used explicit XML tags (e.g., `<connector type="CAUSAL"> because </connector>`) and a static $1.1\times$ multiplier in the forward pass. This resulted in two critical failures:
-1.  **Residual Stiffness:** Multiplying embeddings in the forward pass inflated the residual stream, suppressing the contribution of learned contextual updates.
-2.  **OOD Inference Drop:** The model learned to reason *only* when XML tags were present. Removing them during benchmarks (like MMLU) caused a massive Out-of-Distribution shock (-15% accuracy drop).
+### The Problem with Phase 1 & 2
+*   **Phase 1 (XML Tagging)**: Failed because injecting XML tags caused an Out-of-Distribution (OOD) collapse during standard inference benchmarks like MMLU.
+*   **Phase 2 (Backward Hooks)**: Worked well, but required custom PyTorch architectures (a heavily modified `Llama3Model`). This meant the logic could not be easily ported to test Mistral, Qwen, or other models.
 
-### The Phase 2 Solution (This Codebase)
+### The Phase 3 Solution (This Codebase)
 
-1.  **Invisible Masking**: We entirely removed XML tag pollution. The dataset remains pure, raw text. The `ConnectorAwareTrainer` dynamically scans the tokenized sequence (`input_ids`) to identify the token IDs of 150+ known logical connectors on the fly.
-2.  **Adaptive Gradient Amplification (AGA)**: Instead of a static $1.1\times$ boost, the trainer computes a dynamic multiplier based on the inverse frequency of the connector in the batch.
-    *   $\gamma = 1.0 + \min(0.20, \frac{\alpha}{\text{Frequency}})$
-    *   Common connectors ("because") get a small nudge ($\sim 1.05\times$).
-    *   Rare connectors ("nevertheless") get a strong nudge (up to $1.20\times$) to prevent gradient starvation.
-3.  **Backward Pass Hook**: Instead of multiplying the embedding in the forward pass (which breaks the model's math), we use a `register_hook` on the embedding layer. The AGA multiplier is applied **strictly to the backward gradient**. The model's forward inference remains $100\%$ structurally identical to base Llama 3.2, ensuring flawless zero-shot evaluation on standard benchmarks without requiring special trigger tokens.
+1.  **HuggingFace Native (Model Agnostic)**: `pretrain/model.py` now directly wraps `AutoModelForCausalLM`. You can plug in *any* causal language model architecture and our optimization will work out of the box.
+2.  **Implicit RL via Sequence Rewarding**: Instead of hacking the embedding layer, the `ConnectorAwareTrainer` dynamically calculates a **Reward-Weighted Cross-Entropy Loss**.
+    *   **The Reward**: If the model predicts a rare logical connector ("therefore", "consequently"), the loss penalty for the sequence that follows is amplified by a high factor (e.g., $1.20\times$).
+    *   **The Reasoning Span**: The reward is decayed over a hyperparameter `chain_length=5` tokens. This ensures the model isn't just learning to predict the word "therefore", but is structurally optimizing for the *actual logical conclusion* that follows it.
+3.  **Clean Datasets**: Added `prepare_datasets.py` pipelines for **ProofWriter** and **EntailmentBank**—curated, high-signal logical datasets that bypass the parsing noise found in ArXiv PDFs.
 
 ## 📁 Repository Structure
 
-*   **`pretrain/model.py`**: Contains the modified `Llama3Model` with the `aga_backward_hook` implementation.
-*   **`pretrain/trainer.py`**: Contains the `ConnectorAwareTrainer` which computes the dynamic AGA mask using "Invisible Masking" directly from `input_ids`.
-*   **`utils/connector_detector.py`**: The raw text parsing logic (cleared of old XML tag generation).
+*   **`pretrain/model.py`**: Generalized `AutoModelForCausalLM` wrapper.
+*   **`pretrain/trainer.py`**: The core logic. Contains the `ConnectorAwareTrainer` that calculates the Sequence Reward and applies it to the Cross-Entropy loss.
+*   **`utils/config.py`**: Hyperparameters for the RL logic (`reward_chain_length`, `reward_decay_factor`).
 
-## 🧠 Comparison to "Thoughts of Words" (ToW)
-Unlike ToW, which is an *External/Generative* approach that increases inference latency by forcing the model to generate text "thoughts", AGA is a pure *Optimization/Mechanistic* intervention. We improve reasoning by fundamentally correcting the learning dynamics of the transformer, resulting in a smarter model with zero inference overhead.
+## 🧠 Why "5 Tokens"? (The Reasoning Span)
+By propagating the reward forward over $5$ tokens with a decay factor (e.g., $0.8^n$), we encompass the grammatical "consequent" of a logical operator. 
+If we boost only $1$ token, the model overfits on grammar ("the"). If we boost $20$, we dilute the signal. $5$ acts as the empirical "Goldilocks window" for capturing a logical deduction.

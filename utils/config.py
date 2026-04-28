@@ -25,10 +25,11 @@ class Config:
     boost_factor: float = 1.1
     boost_applies_to: str = "connector_words"
     
-    # Tag Format - CORRECTED: Proper format tags
-    tag_format: str = '<connector type="{type}">{word}</connector>'
-    opening_tag_format: str = '<connector type="{type}">'
-    closing_tag: str = '</connector>'
+    # Phase 3 RL Reward Settings (Implicit RL)
+    use_reward_weighting: bool = True
+    base_reward_alpha: float = 5.0     # Controls dynamic scaling
+    reward_chain_length: int = 5       # Propagates reward over reasoning span
+    reward_decay_factor: float = 0.8   # Decay multiplier per token in sequence
     
     # LoRA Settings
     use_lora: bool = False
@@ -162,15 +163,6 @@ class Config:
     dataloader_pin_memory: bool = True
     dataloader_prefetch_factor: int = 2
     
-    # Helper Methods
-    def get_special_tokens(self) -> List[str]:
-        """Get special tokens for tokenizer."""
-        tokens = []
-        for conn_type in self.connector_types.keys():
-            tokens.append(self.opening_tag_format.format(type=conn_type.upper()))
-        tokens.append(self.closing_tag)
-        return tokens
-    
     def get_connector_type_names(self) -> List[str]:
         """Get connector type names."""
         return [conn_type.upper() for conn_type in self.connector_types.keys()]
@@ -181,10 +173,6 @@ class Config:
         assert self.checkpoint_size > 0, "Checkpoint size must be positive"
         assert len(self.connector_types) > 0, "Must have at least one connector type"
         assert self.device in ["cuda", "cpu", "auto"], f"Invalid device: {self.device}"
-        
-        # Validate tag format
-        assert self.opening_tag_format, "opening_tag_format cannot be empty!"
-        assert self.closing_tag, "closing_tag cannot be empty!"
         
         if self.device == "cuda":
             import torch
@@ -222,10 +210,9 @@ class Config:
         print(f"  Enabled: {self.use_connector_boost}")
         print(f"  Factor: {self.boost_factor}×")
         
-        print(f"\nTag Format:")
-        print(f"  Opening: {self.opening_tag_format}")
-        print(f"  Closing: {self.closing_tag}")
-        print(f"  Full:    {self.tag_format}")
+        print(f"  RL Reward Enabled: {self.use_reward_weighting}")
+        print(f"  Reasoning Span: {self.reward_chain_length} tokens")
+        print(f"  Decay Factor: {self.reward_decay_factor}")
         
         print(f"\nTraining:")
         print(f"  Epochs: {self.num_train_epochs}")
@@ -238,9 +225,7 @@ class Config:
         for conn_type, words in self.connector_types.items():
             print(f"  • {conn_type.upper()}: {len(words)} phrases")
         
-        print(f"\nSpecial Tokens: {len(self.get_special_tokens())}")
-        tokens = self.get_special_tokens()
-        print(f"  Sample: {tokens[:2]}")
+
         
         print(f"\nData Loading:")
         print(f"  Workers: {self.dataloader_num_workers} (parallel)")
@@ -249,14 +234,9 @@ class Config:
         print("=" * 70 + "\n")
 
 
-# Module-level exports
 _default_config = Config()
 BASE_MODEL = _default_config.model_name
-CONNECTOR_ATTENTION_WEIGHT = _default_config.boost_factor
-MAX_SEQUENCE_LENGTH = _default_config.max_sequence_length
-TAG_FORMAT = _default_config.tag_format
 CHECKPOINT_DIR = _default_config.checkpoint_dir
-SPECIAL_TOKENS = _default_config.get_special_tokens()
 
 
 def get_connector_types() -> List[str]:
@@ -275,15 +255,8 @@ def verify_configuration():
     
     print(f"✓ Model: {config.model_name}")
     print(f"✓ Device: {config.device}")
-    print(f"✓ Opening tag format: {config.opening_tag_format}")
-    print(f"✓ Closing tag format: {config.closing_tag}")
-    print(f"✓ Boost factor: {config.boost_factor}x")
-    print(f"✓ Special tokens: {len(SPECIAL_TOKENS)}")
     print(f"✓ Connector types: {len(config.connector_types)}")
-    
-    print(f"\nSpecial tokens:")
-    for i, token in enumerate(SPECIAL_TOKENS, 1):
-        print(f"  {i}. {token}")
+    print(f"✓ RL Chain Length: {config.reward_chain_length}")
     
     print(f"\nConnector types:")
     for ctype, words in config.connector_types.items():

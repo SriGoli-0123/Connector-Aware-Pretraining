@@ -133,8 +133,9 @@ class ConnectorAwareTrainer(Trainer):
     3. ✅ Adaptive Gradient Amplification (AGA): Dynamically calculates frequency-based boost
     """
     
-    def __init__(self, *args, connector_words=None, **kwargs):
+    def __init__(self, *args, config=None, connector_words=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.rl_config = config
         self.connector_token_ids = None
         if connector_words is not None and self.tokenizer is not None:
             # Get token IDs for all connector words to enable Invisible Masking
@@ -144,7 +145,7 @@ class ConnectorAwareTrainer(Trainer):
                 if tokens:
                     ids.add(tokens[0])  # Primary subword
             self.connector_token_ids = torch.tensor(list(ids), dtype=torch.long)
-            logger.info(f"✓ Initialized Invisible Masking with {len(ids)} connector token IDs")
+            logger.info(f"✓ Initialized Implicit RL with {len(ids)} connector token IDs")
 
     def _align_special_tokens(self):
         """Override to skip HF Trainer's config validation."""
@@ -186,9 +187,9 @@ class ConnectorAwareTrainer(Trainer):
             # Identify connectors in the shifted targets
             is_connector = torch.isin(shift_labels, self.connector_token_ids)
             
-            if is_connector.any():
+            if is_connector.any() and getattr(self.rl_config, 'use_reward_weighting', True):
                 unique_ids, counts = torch.unique(shift_labels[is_connector], return_counts=True)
-                alpha = 5.0
+                alpha = getattr(self.rl_config, 'base_reward_alpha', 5.0)
                 
                 # Apply base logical reward based on rarity
                 for uid, count in zip(unique_ids, counts):
@@ -196,8 +197,8 @@ class ConnectorAwareTrainer(Trainer):
                     reward_weights[(shift_labels == uid)] = reward_val
                 
                 # Propagate reward to the subsequent reasoning chain (Sequence Rewarding)
-                decay_factor = 0.8
-                chain_length = 5
+                decay_factor = getattr(self.rl_config, 'reward_decay_factor', 0.8)
+                chain_length = getattr(self.rl_config, 'reward_chain_length', 5)
                 
                 base_reward = reward_weights.clone()
                 for i in range(1, chain_length + 1):
@@ -225,10 +226,8 @@ class ConnectorPretrainingManager:
     FIXED FINAL: Manager for connector-aware pretraining.
     
     Features:
-    - Uses data_loader_FIXED_V3.py for DirectParquetDataset
-    - Uses ConnectorDataCollatorWithMaskCreation for on-the-fly mask creation
-    - Passes BOTH attention_mask AND connector_mask to model
-    - Approach 1: Embedding boost only (no compounding)
+    - Uses AutoModelForCausalLM (Model Agnostic)
+    - Applies Reward-Weighted Cross-Entropy (Implicit RL)
     """
     
     def __init__(self, config, model_handler, use_new_collator: bool = True):
@@ -247,19 +246,11 @@ class ConnectorPretrainingManager:
         self.trainer = None
         
         logger.info("\n" + "="*70)
-        logger.info("CONNECTOR PRETRAINING MANAGER (FINAL FIXED)")
+        logger.info("CONNECTOR PRETRAINING MANAGER (PHASE 3 - RL)")
         logger.info("="*70)
         logger.info(f"Model: {config.model_name}")
         logger.info(f"Device: {config.device}")
-        logger.info(f"Boost factor: {config.boost_factor}")
-        logger.info(f"Approach: 1 (Embedding boost only - no compounding)")
-        logger.info(f"attention_mask: Passed to model for attention masking")
-        logger.info(f"connector_mask: Created on-the-fly by collator")
-        logger.info(f"Loss: Standard cross-entropy (no weighting)")
-        if use_new_collator:
-            logger.info(f"Data collator: ConnectorDataCollatorWithMaskCreation")
-        else:
-            logger.info(f"Data collator: ConnectorAwareDataCollator (FALLBACK)")
+        logger.info(f"Objective: Reward-Weighted Cross-Entropy (RL)")
         logger.info("="*70 + "\n")
     
     def _load_dataset_from_parquet(self, parquet_path: str, max_files: Optional[int] = None) -> HFDataset:
@@ -395,10 +386,11 @@ class ConnectorPretrainingManager:
             eval_dataset=eval_dataset if eval_dataset else None,
             tokenizer=self.model_handler.tokenizer,
             data_collator=data_collator,
+            config=self.config,
             connector_words=connector_words
         )
         
-        logger.info("✓ Trainer created with Invisible Masking initialized")
+        logger.info("✓ Trainer created with Implicit RL initialized")
         
         # Summary
         logger.info("\n" + "="*70)
@@ -409,32 +401,10 @@ class ConnectorPretrainingManager:
         if eval_dataset:
             logger.info(f"Evaluation samples: {len(eval_dataset):,}")
         
-        logger.info(f"\nConnector Boosting (Approach 1):")
-        logger.info(f"  Location: Embedding layer ONLY")
-        logger.info(f"  Boost factor: {boost_factor}×")
-        logger.info(f"  Compounding: NO (single boost)")
-        logger.info(f"  Gradient amplification: Indirect (from boosted embeddings)")
-        
-        logger.info(f"\nThree Masks Working Together:")
-        logger.info(f"  1. attention_mask (0/1): Passed to model for attention masking")
-        logger.info(f"     → Masks padding in attention scores (scores → -inf)")
-        logger.info(f"  2. connector_mask (1.0/1.1): Passed to model for embedding boost")
-        logger.info(f"     → Amplifies connector embeddings by 1.1×")
-        logger.info(f"  3. labels (-100): Used in cross-entropy loss")
-        logger.info(f"     → Padding ignored with ignore_index=-100")
-        
-        logger.info(f"\nData Flow:")
-        logger.info(f"  1. Parquet: input_ids + attention_mask")
-        logger.info(f"  2. Collator: Creates connector_mask on-the-fly")
-        logger.info(f"  3. Collator: Creates labels (input_ids with -100 for padding)")
-        logger.info(f"  4. Trainer: Passes attention_mask, connector_mask to model")
-        logger.info(f"  5. Model: Applies masking + boost")
-        logger.info(f"  6. Loss: Standard cross-entropy (no weighting)")
-        
-        logger.info(f"\nLoss Function:")
-        logger.info(f"  Type: Standard cross-entropy")
-        logger.info(f"  Weighting: NONE (Approach 1)")
-        logger.info(f"  Effect: Clean, simple, no compounding")
+        logger.info(f"\nObjective: Reward-Weighted Cross-Entropy (Implicit RL)")
+        logger.info(f"  Base Reward Alpha: {self.config.base_reward_alpha}")
+        logger.info(f"  Reward Chain Length: {self.config.reward_chain_length}")
+        logger.info(f"  Reward Decay Factor: {self.config.reward_decay_factor}")
         
         logger.info(f"\nTraining Settings:")
         logger.info(f"  Epochs: {num_epochs}")
