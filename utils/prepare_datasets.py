@@ -356,8 +356,13 @@ class DatasetPreparer:
         logger.info("="*80 + "\n")
         
         try:
-            # Use ariesutiono/entailment-bank-v3 as the reliable Hub path
-            dataset = load_dataset("ariesutiono/entailment-bank-v3", split="train")
+            # Use ariesutiono/entailment-bank-v3 with data_files to avoid schema mismatch
+            # We focus on Task 1 (Context + Question -> Hypothesis) for pre-training
+            dataset = load_dataset(
+                "ariesutiono/entailment-bank-v3", 
+                data_files="task1_train.jsonl", 
+                split="train"
+            )
             
             from transformers import AutoTokenizer
             from connector_detector import ConnectorDetector
