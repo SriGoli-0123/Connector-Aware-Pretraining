@@ -269,7 +269,6 @@ class ConnectorPretrainingManager:
             fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
             # Logging
             logging_steps=50,
-            logging_dir=f"{output_dir}/logs",
             # Evaluation
             eval_strategy="steps" if eval_dataset else "no",
             eval_steps=500 if eval_dataset else None,
@@ -278,7 +277,7 @@ class ConnectorPretrainingManager:
             save_steps=1000,
             save_total_limit=3,
             # Reporting
-            report_to="tensorboard",
+            report_to="none",
             run_name="connector_pretrain",
             dataloader_num_workers=4,
             dataloader_pin_memory=True,
