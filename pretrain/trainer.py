@@ -471,12 +471,37 @@ if __name__ == "__main__":
     logger.info("STARTING CONNECTOR-AWARE PRETRAINING")
     logger.info("="*70)
     
-    # 1. Prepare Trainer
+    # 1. Initialize
     manager = ConnectorPretrainingManager(cfg, handler)
-    manager.prepare_trainer()
     
-    # 2. Run Training
+    # 2. Load Dataset
+    dataset_path = cfg.combined_dataset_path
+    if not Path(dataset_path).exists():
+        logger.error(f"❌ Dataset not found at {dataset_path}. Run prepare_datasets.py first!")
+        sys.exit(1)
+        
+    dataset = manager._load_dataset_from_hf_format(dataset_path)
+    
+    # Handle splits
+    if hasattr(dataset, 'keys'):
+        train_ds = dataset['train']
+        eval_ds = dataset.get('validation', dataset.get('test', None))
+    else:
+        train_ds = dataset
+        eval_ds = None
+    
+    # 3. Prepare Trainer
+    manager.prepare_trainer(
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
+        boost_factor=cfg.boost_factor,
+        num_epochs=cfg.num_train_epochs,
+        batch_size=cfg.per_device_train_batch_size,
+        learning_rate=cfg.learning_rate
+    )
+    
+    # 4. Run Training
     manager.train()
     
-    # 3. Save Final Model
+    # 5. Save Final Model
     manager.save_model()
