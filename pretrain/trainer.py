@@ -51,6 +51,14 @@ class ConnectorAwareTrainer(Trainer):
     """
     
     def __init__(self, *args, config=None, connector_words=None, **kwargs):
+        # Handle recent renaming in Transformers (tokenizer -> processing_class)
+        if "tokenizer" in kwargs and not hasattr(Trainer, "tokenizer"):
+            # Check if Trainer expects processing_class instead
+            import inspect
+            sig = inspect.signature(Trainer.__init__)
+            if "processing_class" in sig.parameters and "tokenizer" not in sig.parameters:
+                kwargs["processing_class"] = kwargs.pop("tokenizer")
+        
         super().__init__(*args, **kwargs)
         self.rl_config = config
         self.connector_token_ids = None
@@ -276,8 +284,8 @@ class ConnectorPretrainingManager:
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset if eval_dataset else None,
-            tokenizer=self.model_handler.tokenizer,
             data_collator=data_collator,
+            tokenizer=self.model_handler.tokenizer,
             config=self.config,
             connector_words=connector_words
         )
