@@ -276,8 +276,8 @@ class ConnectorPretrainingManager:
             eval_steps=500 if eval_dataset else None,
             # Saving
             save_strategy="steps",
-            save_steps=1000,
-            save_total_limit=3,
+            save_steps=kwargs.get("save_steps", 500),
+            save_total_limit=kwargs.get("save_total_limit", 3),
             # Reporting
             report_to=kwargs.get("report_to", "none"),
             run_name=kwargs.get("run_name", "connector_pretrain"),
@@ -332,16 +332,17 @@ class ConnectorPretrainingManager:
         logger.info(f"  Learning rate: {learning_rate}")
         logger.info("="*70 + "\n")
     
-    def train(self):
+    def train(self, resume_from_checkpoint: bool = False):
         """Execute training"""
         if self.trainer is None:
             raise ValueError("Trainer not prepared. Call prepare_trainer() first.")
         
         logger.info("\n" + "="*70)
-        logger.info("STARTING TRAINING")
+        logger.info(f"STARTING TRAINING (Resume: {resume_from_checkpoint})")
         logger.info("="*70 + "\n")
         
-        self.trainer.train()
+        # If True, Trainer will automatically find the latest checkpoint in output_dir
+        self.trainer.train(resume_from_checkpoint=resume_from_checkpoint)
         
         logger.info("\n" + "="*70)
         logger.info("✓ TRAINING COMPLETE")
@@ -430,11 +431,13 @@ if __name__ == "__main__":
         learning_rate=cfg.learning_rate,
         push_to_hub=getattr(cfg, "push_to_hub", False),
         hub_model_id=getattr(cfg, "hub_model_id", None),
-        report_to=getattr(cfg, "report_to", "none")
+        report_to=getattr(cfg, "report_to", "none"),
+        save_steps=getattr(cfg, "save_steps", 500),
+        save_total_limit=getattr(cfg, "save_total_limit", 3)
     )
     
     # 4. Run Training
-    manager.train()
+    manager.train(resume_from_checkpoint=getattr(cfg, "resume_from_checkpoint", False))
     
     # 5. Save Final Model
     manager.save_model()

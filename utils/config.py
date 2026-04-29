@@ -31,6 +31,11 @@ class Config:
     reward_chain_length: int = 5       # Propagates reward over reasoning span
     reward_decay_factor: float = 0.8   # Decay multiplier per token in sequence
     
+    # Training Loop Control
+    resume_from_checkpoint: bool = False
+    save_steps: int = 500
+    save_total_limit: int = 3
+    
     # LoRA Settings
     use_lora: bool = False
     lora_r: int = 32
