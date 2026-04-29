@@ -51,15 +51,30 @@ class ConnectorAwareTrainer(Trainer):
     """
     
     def __init__(self, *args, config=None, connector_words=None, **kwargs):
-        # Handle recent renaming in Transformers (tokenizer -> processing_class)
-        if "tokenizer" in kwargs and not hasattr(Trainer, "tokenizer"):
-            # Check if Trainer expects processing_class instead
-            import inspect
-            sig = inspect.signature(Trainer.__init__)
-            if "processing_class" in sig.parameters and "tokenizer" not in sig.parameters:
-                kwargs["processing_class"] = kwargs.pop("tokenizer")
+        # 1. Identify which keyword the current Trainer version expects
+        import inspect
+        trainer_sig = inspect.signature(Trainer.__init__)
+        parameters = trainer_sig.parameters
         
+        # Capture tokenizer from kwargs if it exists
+        tokenizer = kwargs.get("tokenizer", None)
+        
+        # 2. Map to the correct keyword
+        if "tokenizer" not in parameters:
+            if "processing_class" in parameters:
+                # Newest HF version (v4.46+)
+                if "tokenizer" in kwargs:
+                    kwargs["processing_class"] = kwargs.pop("tokenizer")
+            else:
+                # Very old or customized version
+                kwargs.pop("tokenizer", None)
+        
+        # 3. Call super and manually ensure self.tokenizer is set
         super().__init__(*args, **kwargs)
+        
+        if self.tokenizer is None and tokenizer is not None:
+            self.tokenizer = tokenizer
+            
         self.rl_config = config
         self.connector_token_ids = None
         if connector_words is not None and self.tokenizer is not None:
