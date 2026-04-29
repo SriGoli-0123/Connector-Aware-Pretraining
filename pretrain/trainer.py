@@ -425,6 +425,7 @@ if __name__ == "__main__":
     manager.prepare_trainer(
         train_dataset=train_ds,
         eval_dataset=eval_ds,
+        output_dir=cfg.output_dir,
         boost_factor=cfg.boost_factor,
         num_epochs=cfg.num_train_epochs,
         batch_size=cfg.per_device_train_batch_size,

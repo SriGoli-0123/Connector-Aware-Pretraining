@@ -19,6 +19,7 @@ class Config:
     model_name: str = "meta-llama/Llama-3.2-3B"
     device: str = "cuda"
     torch_dtype: str = "bfloat16"
+    output_dir: str = "./output/connector_model"
     
     # Connector Boosting
     use_connector_boost: bool = True
