@@ -283,6 +283,10 @@ class ConnectorPretrainingManager:
             run_name="connector_pretrain",
             dataloader_num_workers=4,
             dataloader_pin_memory=True,
+            # Hub Upload
+            push_to_hub=kwargs.get("push_to_hub", False),
+            hub_model_id=kwargs.get("hub_model_id", None),
+            hub_strategy="every_save",
         )
         
         logger.info("✓ Training arguments configured")
@@ -378,7 +382,13 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    cfg = Config()
+    from transformers import HfArgumentParser
+    
+    parser = HfArgumentParser(Config)
+    if len(sys.argv) > 1:
+        cfg = parser.parse_args_into_dataclasses()[0]
+    else:
+        cfg = Config()
     handler = ModelHandler(cfg)
     handler.load_tokenizer()
     handler.load_model()
@@ -413,7 +423,9 @@ if __name__ == "__main__":
         boost_factor=cfg.boost_factor,
         num_epochs=cfg.num_train_epochs,
         batch_size=cfg.per_device_train_batch_size,
-        learning_rate=cfg.learning_rate
+        learning_rate=cfg.learning_rate,
+        push_to_hub=getattr(cfg, "push_to_hub", False),
+        hub_model_id=getattr(cfg, "hub_model_id", None)
     )
     
     # 4. Run Training

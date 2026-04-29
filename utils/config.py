@@ -41,6 +41,10 @@ class Config:
         "gate_proj", "up_proj", "down_proj"
     ])
     
+    # Hub Configuration
+    push_to_hub: bool = False
+    hub_model_id: str = None
+    
     # Connector Types with Multi-word Support
     connector_types: Dict[str, List[str]] = field(default_factory=lambda: {
         'CAUSAL': [
