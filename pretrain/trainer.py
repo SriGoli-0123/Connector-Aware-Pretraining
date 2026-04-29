@@ -72,7 +72,9 @@ class ConnectorAwareTrainer(Trainer):
         # 3. Call super and manually ensure self.tokenizer is set
         super().__init__(*args, **kwargs)
         
-        if self.tokenizer is None and tokenizer is not None:
+        # Safely ensure tokenizer is attached to instance
+        current_tokenizer = getattr(self, "tokenizer", None)
+        if current_tokenizer is None and tokenizer is not None:
             self.tokenizer = tokenizer
             
         self.rl_config = config
