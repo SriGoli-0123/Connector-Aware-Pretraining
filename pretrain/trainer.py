@@ -149,19 +149,16 @@ class ConnectorPretrainingManager:
     - Applies Reward-Weighted Cross-Entropy (Implicit RL)
     """
     
-    def __init__(self, config, model_handler, use_new_collator: bool = True):
+    def __init__(self, config, model_handler):
         """
         Args:
             config: Config instance
             model_handler: Model handler (from model.py)
-            use_new_collator: Use ConnectorDataCollatorWithMaskCreation (recommended: True)
         """
         self.config = config
         self.model_handler = model_handler
-        self.use_new_collator = use_new_collator
         
         # Initialize components
-        self.annotator = ConnectorAnnotator(config.connector_types)
         self.trainer = None
         
         logger.info("\n" + "="*70)
