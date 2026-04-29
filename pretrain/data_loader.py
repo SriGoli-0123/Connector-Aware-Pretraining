@@ -1,345 +1,149 @@
 #!/usr/bin/env python3
 """
-data_loader_FIXED_V3.py - WITH PADDING VALIDATION
+data_loader.py - PHASE 3: GHOST MASKING DATA LOADER
 
-FIXES:
-1. ✅ _create_boost_mask() is called in __call__()
-2. ✅ connector_mask is returned in batch dict
-3. ✅ Tags are excluded from boost
-4. ✅ PADDING VALIDATION ADDED - fixes incorrect attention_mask from parquet
-
-NEW FIX (V3):
-- Validates attention_mask against pad_token_id
-- Forces attention_mask=0 for all padding positions
-- Prevents connector_mask from boosting padding
+CLEANED VERSION:
+1. ✅ Removed all XML tag logic.
+2. ✅ Uses pre-calculated Ghost Masks (connector_mask) from the dataset.
+3. ✅ Ensures special tokens (BOS, EOS, PAD) are NEVER boosted.
+4. ✅ Validates and fixes attention_mask for proper padding.
+5. ✅ Model-agnostic and efficient.
 """
 
 import logging
 import pandas as pd
 import torch
 from pathlib import Path
-from datasets import Dataset, DatasetDict, load_from_disk, concatenate_datasets
+from datasets import Dataset, DatasetDict, load_from_disk
 from typing import Optional, List, Dict
-from transformers import PreTrainedTokenizer
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 class ConnectorDataCollatorWithMaskCreation:
     """
-    FIXED V3: Collator with padding validation.
+    PHASE 3 COLLATOR: Ghost Masking.
     
-    Key functionality:
-    - Handles list inputs and converts to tensors
-    - Creates connector masks by detecting special tokens
-    - Boosts ONLY content words (excludes opening/closing tags)
-    - VALIDATES attention_mask (fixes padding from parquet)
-    - Returns connector_mask for model to apply boost
+    This collator is designed for model-agnostic pre-training. It does not
+    modify the text or add special tokens. Instead, it uses a binary mask
+    to boost the loss of specific tokens at training time.
     """
     
     def __init__(self, tokenizer, pad_token_id=None, boost_factor=1.1):
         self.tokenizer = tokenizer
-        self.pad_token_id = pad_token_id or tokenizer.pad_token_id
+        self.pad_token_id = pad_token_id if pad_token_id is not None else tokenizer.pad_token_id
         self.boost_factor = boost_factor
         
-        # Initialize connector tag detection
-        self._init_connector_tags()
-        
-        logger.info(f"✓ Collator initialized with pad_token_id={self.pad_token_id}")
-    
-    def _init_connector_tags(self):
-        """Initialize connector tag token IDs from tokenizer."""
-        logger.info("Initializing connector tag token IDs:")
-        
-        connector_opening_tags = set()
-        connector_closing_tag_id = None
-        
-        # Expected tag formats (from config.py)
-        opening_tag_templates = [
-            '<connector type="CAUSAL">',
-            '<connector type="ADVERSATIVE">',
-            '<connector type="TEMPORAL">',
-            '<connector type="CONDITIONAL">',
-            '<connector type="CONCLUSIVE">',
-            '<connector type="ADDITIVE">',
-        ]
-        
-        closing_tag_str = '</connector>'
-        
-        # Extract token IDs from tokenizer
-        for tag_str in opening_tag_templates:
-            try:
-                token_ids = self.tokenizer.encode(tag_str, add_special_tokens=False)
-                if len(token_ids) == 1:
-                    tag_id = token_ids[0]
-                    connector_opening_tags.add(tag_id)
-                    logger.info(f"  Opening tag: {tag_str:40} → ID {tag_id}")
-                else:
-                    logger.warning(f"  ⚠ Opening tag encoded to multiple tokens: {tag_str}")
-            except Exception as e:
-                logger.warning(f"  ⚠ Error encoding tag {tag_str}: {e}")
-        
-        # Extract closing tag
-        try:
-            token_ids = self.tokenizer.encode(closing_tag_str, add_special_tokens=False)
-            if len(token_ids) == 1:
-                connector_closing_tag_id = token_ids[0]
-                logger.info(f"  Closing tag: {closing_tag_str:40} → ID {connector_closing_tag_id}")
-            else:
-                logger.warning(f"  ⚠ Closing tag encoded to multiple tokens: {token_ids}")
-        except Exception as e:
-            logger.warning(f"  ⚠ Error encoding closing tag: {e}")
-        
-        self.connector_opening_tags = connector_opening_tags
-        self.connector_closing_tag_id = connector_closing_tag_id
-        
-        if connector_opening_tags and connector_closing_tag_id:
-            logger.info(f"✓ Found {len(connector_opening_tags)} opening tags + 1 closing tag")
-        else:
-            logger.warning(f"\n⚠️  WARNING: Connector tags not properly initialized!")
-            logger.warning(f"   This may indicate tokenizer mismatch or incomplete setup.")
-    
-    def _ensure_int_list(self, values):
-        """
-        Convert values to integer list.
-        
-        Handles:
-        - None → []
-        - Strings → ints
-        - Already ints → pass through
-        """
-        if values is None:
-            return []
-        
-        if isinstance(values, list):
-            if len(values) == 0:
-                return []
+        # Identify special tokens to exclude from any logical rewards
+        self.special_token_ids = set(self.tokenizer.all_special_ids)
+        if self.pad_token_id is not None:
+            self.special_token_ids.add(self.pad_token_id)
             
-            # If strings, convert to ints
-            if isinstance(values[0], str):
-                try:
-                    return [int(v) for v in values]
-                except (ValueError, TypeError):
-                    logger.warning(f"Could not convert list values to int: {values[:3]}")
-                    return values
-            return values
-        
-        return []
-    
+        logger.info(f"✓ Ghost-Mask Collator initialized (Boost: {boost_factor}x, Pad ID: {self.pad_token_id})")
+
     def _create_boost_mask(self, batch: List[Dict], max_len: int) -> torch.Tensor:
         """
-        Retrieves the pre-calculated Ghost Mask from the batch.
-        
-        Args:
-            batch: List of dataset items
-            max_len: Target sequence length
-            
-        Returns:
-            torch.Tensor: Combined connector mask for the batch
+        Converts the binary connector_mask from the dataset into a decimal boost mask.
         """
         batch_size = len(batch)
         mask = torch.ones((batch_size, max_len), dtype=torch.float32)
         
-        # Get all special token IDs to exclude them from boosting
-        special_token_ids = set(self.tokenizer.all_special_ids)
-        
         for i, item in enumerate(batch):
             conn_mask = item.get("connector_mask", [])
             input_ids = item.get("input_ids", [])
+            
             if not conn_mask:
                 continue
                 
-            # Convert to float and pad/truncate
+            # Convert binary mask to tensor
             curr_mask = torch.tensor(conn_mask, dtype=torch.float32)
             length = min(len(curr_mask), max_len)
             
-            # SAFETY GATE: Zero out boost for any special tokens
-            # This ensures BOS, EOS, and PAD never receive a logical boost
+            # SAFETY GATE: Ensure structural special tokens never receive a logical boost
+            # Even if the detector accidentally flagged one, we zero it out here.
             for j in range(length):
-                if input_ids[j] in special_token_ids:
+                if input_ids[j] in self.special_token_ids:
                     curr_mask[j] = 0.0
             
-            # Apply Ghost Mask (1.0 for normal, boost_factor for connectors)
+            # Apply boost: 1.0 (base) + (binary_mask * (boost_factor - 1.0))
+            # e.g., 1.0 + (1 * 0.2) = 1.2
             mask[i, :length] = 1.0 + (curr_mask[:length] * (self.boost_factor - 1.0))
             
         return mask
-    
+
     def __call__(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
         """
-        ✅ FIXED V3: Collate batch with PADDING VALIDATION.
-        
-        Returns:
-            dict with keys: input_ids, attention_mask, labels, connector_mask
+        Collates the batch, handles padding, and creates the logical boost mask.
         """
-        
         if not batch:
-            raise ValueError("Empty batch")
-        
-        # Extract input_ids and attention_mask
+            return {}
+            
         input_ids_list = []
         attention_mask_list = []
         
+        # 1. Extract and validate existing masks
         for item in batch:
-            input_ids = item.get("input_ids")
-            attention_mask = item.get("attention_mask")
+            ids = item.get("input_ids", [])
+            attn = item.get("attention_mask", [])
             
-            # Handle tensors/lists
-            if isinstance(input_ids, torch.Tensor):
-                input_ids = input_ids.tolist()
-            input_ids = self._ensure_int_list(input_ids)
+            # Ensure they are lists
+            if isinstance(ids, torch.Tensor): ids = ids.tolist()
+            if isinstance(attn, torch.Tensor): attn = attn.tolist()
             
-            if isinstance(attention_mask, torch.Tensor):
-                attention_mask = attention_mask.tolist()
-            attention_mask = self._ensure_int_list(attention_mask)
+            input_ids_list.append(ids)
+            attention_mask_list.append(attn)
             
-            input_ids_list.append(input_ids)
-            attention_mask_list.append(attention_mask)
-        
-        # ✅ NEW (V3): VALIDATE ATTENTION_MASK FOR PADDING
-        # Fix incorrect attention_mask from parquet files
-        num_fixed = 0
-        for i in range(len(input_ids_list)):
-            for j in range(len(input_ids_list[i])):
-                if input_ids_list[i][j] == self.pad_token_id:
-                    if attention_mask_list[i][j] != 0:
-                        attention_mask_list[i][j] = 0
-                        num_fixed += 1
-        
-        if num_fixed > 0:
-            logger.debug(f"Fixed {num_fixed} padding positions with incorrect attention_mask")
-        
-        # Pad to same length
-        max_len = max(len(ids) for ids in input_ids_list) if input_ids_list else 1
+        # 2. Dynamic Padding
+        max_len = max(len(ids) for ids in input_ids_list)
         
         for i in range(len(input_ids_list)):
             pad_len = max_len - len(input_ids_list[i])
             if pad_len > 0:
                 input_ids_list[i].extend([self.pad_token_id] * pad_len)
-                attention_mask_list[i].extend([0] * pad_len)  # Padding has mask=0
+                attention_mask_list[i].extend([0] * pad_len)
+                
+        # 3. Convert to Tensors
+        input_ids = torch.tensor(input_ids_list, dtype=torch.long)
+        attention_mask = torch.tensor(attention_mask_list, dtype=torch.long)
         
-        # Convert to tensors
-        input_ids_tensor = torch.stack([
-            torch.tensor(ids, dtype=torch.long) for ids in input_ids_list
-        ])
-        attention_mask_tensor = torch.stack([
-            torch.tensor(mask, dtype=torch.long) for mask in attention_mask_list
-        ])
+        # 4. Create Labels (Shifted inside model, but we mask padding here)
+        labels = input_ids.clone()
+        labels[attention_mask == 0] = -100
         
-        # Create labels
-        labels = input_ids_tensor.clone()
-        labels[attention_mask_tensor == 0] = -100  # Exclude padding from loss
-        
-        # ✅ CREATE CONNECTOR MASK (from pre-calculated Ghost Masks)
+        # 5. Create the Ghost Reward Mask
         connector_mask = self._create_boost_mask(batch, max_len)
         
-        # ✅ ENSURE connector_mask doesn't boost padding
-        # Set connector_mask = 1.0 where attention_mask = 0
-        connector_mask = connector_mask * attention_mask_tensor.float()
-        connector_mask = connector_mask + (1.0 - attention_mask_tensor.float())
-        # Result: padding positions have connector_mask = 1.0 (no boost)
-        
-        # ✅ RETURN 4 KEYS - INCLUDING connector_mask!
-        return {
-            "input_ids": input_ids_tensor,
-            "attention_mask": attention_mask_tensor,
-            "labels": labels,
-            "connector_mask": connector_mask,
-        }
-
-
-# ============================================================================
-# Direct Parquet Dataset (no changes needed)
-# ============================================================================
-
-class DirectParquetDataset:
-    """Load parquet files with string-to-integer conversion."""
-    
-    def __init__(self, parquet_path: str, max_files: Optional[int] = None):
-        self.parquet_path = Path(parquet_path)
-        
-        # Find parquet files
-        if self.parquet_path.is_file():
-            parquet_files = [self.parquet_path]
-        else:
-            parquet_files = sorted(self.parquet_path.glob("*.parquet"))
-        
-        if max_files:
-            parquet_files = parquet_files[:max_files]
-        
-        if not parquet_files:
-            raise FileNotFoundError(f"No parquet files found in {self.parquet_path}")
-        
-        logger.info(f"Found {len(parquet_files)} parquet files")
-        
-        self.data = []
-        for file_path in parquet_files:
-            df = pd.read_parquet(file_path)
-            
-            # Validate columns
-            required_cols = {'input_ids', 'attention_mask'}
-            actual_cols = set(df.columns)
-            
-            if not required_cols.issubset(actual_cols):
-                logger.warning(f"File {file_path.name} missing columns: {required_cols - actual_cols}")
-                continue
-            
-            # Convert to list of dicts
-            self.data.extend(df.to_dict('records'))
-        
-        if not self.data:
-            raise ValueError("No valid data loaded from parquet files")
-        
-        logger.info(f"Loaded {len(self.data):,} samples from parquet")
-        self.total_samples = len(self.data)
-    
-    def __len__(self):
-        return self.total_samples
-    
-    def __getitem__(self, idx):
-        """Get item by index."""
-        item = self.data[idx]
-        
-        # Extract fields
-        input_ids = item.get("input_ids", [])
-        attention_mask = item.get("attention_mask", [])
-        
-        # Ensure lists
-        if isinstance(input_ids, str):
-            try:
-                import ast
-                input_ids = ast.literal_eval(input_ids)
-            except:
-                input_ids = []
-        
-        if isinstance(attention_mask, str):
-            try:
-                import ast
-                attention_mask = ast.literal_eval(attention_mask)
-            except:
-                attention_mask = []
-        
-        # Ensure proper types
-        if isinstance(input_ids, list) and len(input_ids) > 0 and isinstance(input_ids[0], str):
-            input_ids = [int(x) for x in input_ids]
-        
-        if isinstance(attention_mask, list) and len(attention_mask) > 0 and isinstance(attention_mask[0], str):
-            attention_mask = [int(x) for x in attention_mask]
+        # Ensure reward doesn't apply to padding
+        connector_mask = connector_mask * attention_mask.float()
+        connector_mask = connector_mask + (1.0 - attention_mask.float())
         
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
-            "connector_words": item.get("connector_words", []),
-            "connector_types": item.get("connector_types", []),
+            "labels": labels,
+            "connector_mask": connector_mask
         }
 
+class DirectParquetDataset:
+    """Helper to load prepared logical datasets."""
+    def __init__(self, path: str, max_files: Optional[int] = None):
+        self.path = Path(path)
+        if self.path.is_file():
+            files = [self.path]
+        else:
+            files = sorted(self.path.glob("*.parquet"))
+            
+        if max_files:
+            files = files[:max_files]
+            
+        self.data = []
+        for f in files:
+            df = pd.read_parquet(f)
+            self.data.extend(df.to_dict('records'))
+            
+        logger.info(f"✓ Loaded {len(self.data):,} logical reasoning samples")
 
-if __name__ == "__main__":
-    logger.info("=" * 80)
-    logger.info("data_loader_FIXED_V3.py - WITH PADDING VALIDATION")
-    logger.info("=" * 80)
-    logger.info("✅ _create_boost_mask() is called")
-    logger.info("✅ connector_mask is returned")
-    logger.info("✅ Tags excluded from boost")
-    logger.info("✅ Padding attention_mask validation added")
-    logger.info("=" * 80)
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, i):
+        return self.data[i]

@@ -33,90 +33,7 @@ import ast
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# Enhanced Connector Annotator
-# ============================================================================
-
-class ConnectorAnnotator:
-    """Annotates text with connector markup using format: <connector type="TYPE">word</connector>"""
-    
-    def __init__(self, connector_types: Dict[str, List[str]]):
-        """
-        Args:
-            connector_types: Dict mapping connector types to example words
-        """
-        self.connector_types = connector_types
-        self.patterns = self._build_patterns()
-        self.start_token = '<connector type="{type}">'
-        self.end_token = '</connector>'
-    
-    def _build_patterns(self) -> Dict[str, re.Pattern]:
-        """Build regex patterns for each connector type"""
-        patterns = {}
-        for conn_type, connectors in self.connector_types.items():
-            sorted_connectors = sorted(connectors, key=len, reverse=True)
-            pattern = r'\b(' + '|'.join(re.escape(c) for c in sorted_connectors) + r')\b'
-            patterns[conn_type] = re.compile(pattern, re.IGNORECASE)
-        return patterns
-    
-    def annotate(self, text: str) -> str:
-        """Annotate text with connector markup"""
-        if not text or not isinstance(text, str):
-            return text
-        
-        annotated = text
-        for conn_type, pattern in self.patterns.items():
-            annotated = pattern.sub(
-                lambda m: f'{self.start_token.format(type=conn_type)}{m.group(0)}{self.end_token}',
-                annotated
-            )
-        return annotated
-
-
-# ============================================================================
-# Fallback Data Collator
-# ============================================================================
-
-class ConnectorAwareDataCollator:
-    """Fallback data collator that creates connector masks"""
-    
-    def __init__(
-        self,
-        tokenizer,
-        annotator: ConnectorAnnotator,
-        max_length: int = 2048
-    ):
-        self.tokenizer = tokenizer
-        self.annotator = annotator
-        self.max_length = max_length
-    
-    def __call__(self, examples: List[Dict]) -> Dict[str, torch.Tensor]:
-        """Collate batch with connector masks"""
-        
-        # Check if examples already have input_ids
-        if examples and 'input_ids' in examples[0]:
-            # Already tokenized - just pad
-            batch = self.tokenizer.pad(
-                examples,
-                padding=True,
-                max_length=self.max_length,
-                return_tensors="pt"
-            )
-        else:
-            raise ValueError(
-                f"Examples must contain 'input_ids'. "
-                f"Got keys: {list(examples[0].keys()) if examples else 'empty'}"
-            )
-        
-        # Create labels
-        batch["labels"] = batch["input_ids"].clone()
-        batch["labels"][batch["labels"] == self.tokenizer.pad_token_id] = -100
-        
-        # Create connector_mask if not present (collator will create it)
-        if "connector_mask" not in batch:
-            batch["connector_mask"] = torch.ones_like(batch["input_ids"], dtype=torch.float)
-        
-        return batch
+# Removed legacy ConnectorAnnotator and ConnectorAwareDataCollator
 
 
 # ============================================================================
@@ -303,43 +220,19 @@ class ConnectorPretrainingManager:
         # Create data collator
         logger.info(f"\n[1/2] Setting up data collator...")
         
-        if self.use_new_collator:
-            # ✅ FIXED: Import from data_loader_FIXED_V3.py
-            try:
-                from pretrain.data_loader import ConnectorDataCollatorWithMaskCreation
-                data_collator = ConnectorDataCollatorWithMaskCreation(
-                    tokenizer=self.model_handler.tokenizer,
-                    pad_token_id=self.model_handler.tokenizer.pad_token_id,
-                    boost_factor=boost_factor
-                )
-                logger.info("✓ Using ConnectorDataCollatorWithMaskCreation")
-                logger.info(f"  - attention_mask: Validated/regenerated from input_ids")
-                logger.info(f"  - connector_mask: Created ON-THE-FLY")
-                logger.info(f"  - labels: Created with -100 for padding")
-                logger.info(f"  - Boost values: 1.0 (normal) or {boost_factor}× (connector)")
-            except ImportError as e:
-                logger.error(f"❌ IMPORT ERROR: {e}")
-                logger.warning("⚠ Falling back to original collator...")
-                self.use_new_collator = False
-                data_collator = ConnectorAwareDataCollator(
-                    tokenizer=self.model_handler.tokenizer,
-                    annotator=self.annotator,
-                    max_length=getattr(self.config, 'max_length', 2048)
-                )
-        else:
-            logger.info("✓ Using ConnectorAwareDataCollator (FALLBACK)")
-            data_collator = ConnectorAwareDataCollator(
-                tokenizer=self.model_handler.tokenizer,
-                annotator=self.annotator,
-                max_length=getattr(self.config, 'max_length', 2048)
-            )
+        from pretrain.data_loader import ConnectorDataCollatorWithMaskCreation
+        data_collator = ConnectorDataCollatorWithMaskCreation(
+            tokenizer=self.model_handler.tokenizer,
+            pad_token_id=self.model_handler.tokenizer.pad_token_id,
+            boost_factor=boost_factor
+        )
+        logger.info("✓ Using Ghost-Masking Collator (Phase 3)")
         
         # Training arguments
         logger.info(f"\n[2/2] Configuring training arguments...")
         
         training_args = TrainingArguments(
             output_dir=output_dir,
-            overwrite_output_dir=True,
             # Training
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
