@@ -17,7 +17,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 logger = logging.getLogger(__name__)
 
-class Model:
+class ModelHandler:
     """Generalized Model Handler for HuggingFace Causal LMs."""
     
     def __init__(self, config):
@@ -133,13 +133,13 @@ class Model:
         return True
 
 
-def initialize_model(config) -> Model:
+def initialize_model(config) -> ModelHandler:
     """Initialize model from config."""
     logger.info("\n" + "="*70)
     logger.info(f"INITIALIZING {config.model_name.upper()}")
     logger.info("="*70)
     
-    model_handler = Model(config)
+    model_handler = ModelHandler(config)
     
     logger.info("\n[1/2] Loading tokenizer...")
     model_handler.load_tokenizer()

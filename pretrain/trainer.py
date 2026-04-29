@@ -465,7 +465,7 @@ if __name__ == "__main__":
     )
     
     cfg = Config()
-    handler = ModelHandler(cfg.model_name)
+    handler = ModelHandler(cfg)
     
     logger.info("="*70)
     logger.info("STARTING CONNECTOR-AWARE PRETRAINING")
