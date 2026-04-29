@@ -13,7 +13,7 @@ CRITICAL FIXES:
 KEY CHANGE FROM PREVIOUS:
 ✅ Line 155: Now passes BOTH attention_mask AND connector_mask to model
 """
-
+import os
 import re
 import torch
 import torch.nn as nn
@@ -279,8 +279,8 @@ class ConnectorPretrainingManager:
             save_steps=1000,
             save_total_limit=3,
             # Reporting
-            report_to="none",
-            run_name="connector_pretrain",
+            report_to=kwargs.get("report_to", "none"),
+            run_name=kwargs.get("run_name", "connector_pretrain"),
             dataloader_num_workers=4,
             dataloader_pin_memory=True,
             # Hub Upload
@@ -416,7 +416,11 @@ if __name__ == "__main__":
         train_ds = dataset
         eval_ds = None
     
-    # 3. Prepare Trainer
+    # 3. Set up WandB project name if applicable
+    if getattr(cfg, "report_to", "none") == "wandb":
+        os.environ["WANDB_PROJECT"] = getattr(cfg, "wandb_project", "Connector-Pretraining")
+        
+    # 4. Prepare Trainer
     manager.prepare_trainer(
         train_dataset=train_ds,
         eval_dataset=eval_ds,
@@ -425,7 +429,8 @@ if __name__ == "__main__":
         batch_size=cfg.per_device_train_batch_size,
         learning_rate=cfg.learning_rate,
         push_to_hub=getattr(cfg, "push_to_hub", False),
-        hub_model_id=getattr(cfg, "hub_model_id", None)
+        hub_model_id=getattr(cfg, "hub_model_id", None),
+        report_to=getattr(cfg, "report_to", "none")
     )
     
     # 4. Run Training

@@ -45,6 +45,10 @@ class Config:
     push_to_hub: bool = False
     hub_model_id: str = None
     
+    # Visualization & Reporting
+    report_to: str = "none"  # Options: "wandb", "tensorboard", "none"
+    wandb_project: str = "Connector-Aware-Pretraining"
+    
     # Connector Types with Multi-word Support
     connector_types: Dict[str, List[str]] = field(default_factory=lambda: {
         'CAUSAL': [
