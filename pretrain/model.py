@@ -51,12 +51,23 @@ class ModelHandler:
         
         dtype = getattr(torch, self.config.torch_dtype, torch.float32)
         
+        # Determine attention implementation with graceful fallback
+        attn_impl = "sdpa"
+        if self.config.use_flash_attention:
+            try:
+                import flash_attn
+                attn_impl = "flash_attention_2"
+                logger.info("✓ Using FlashAttention-2")
+            except ImportError:
+                logger.warning("⚠ FlashAttention-2 not found. Falling back to standard SDPA.")
+                attn_impl = "sdpa"
+                
         # Load natively generalized HF model
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             torch_dtype=dtype,
             trust_remote_code=True,
-            attn_implementation="flash_attention_2" if self.config.use_flash_attention else "sdpa"
+            attn_implementation=attn_impl
         )
         
         device = torch.device(self.config.device)
