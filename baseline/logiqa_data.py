@@ -54,17 +54,11 @@ def create_logiqa_sample():
 import ast
 
 def load_logiqa_dataset():
-    """Ultra-fast optimized LogiQA loader"""
+    """Optimized LogiQA loader for the ENTIRE dataset"""
     try:
-        # Stick to the mirror we know works to avoid timeout loops
         slug = "heka-ai/logiqa"
-        print(f"Loading {slug}...")
+        print(f"Loading {slug} (Full Dataset)...")
         dataset = load_dataset(slug, split="train")
-        
-        # SPEED OPTIMIZATION: Select the test subset (651) BEFORE mapping
-        # This saves processing 7,000+ unnecessary rows
-        if len(dataset) > 651:
-            dataset = dataset.select(range(651))
         
         def map_columns(example):
             # Handle options safely
@@ -87,10 +81,9 @@ def load_logiqa_dataset():
                 "answer": final_answer
             }
         
-        # Now map only the 651 examples
-        print("Mapping columns...")
+        print(f"Mapping columns for all {len(dataset)} examples...")
         mapped_dataset = dataset.map(map_columns)
-        print(f"Ready! Final set: {len(mapped_dataset)} examples")
+        print(f"Ready! Evaluation set: {len(mapped_dataset)} examples")
         return mapped_dataset
     except Exception as e:
         print(f"HF Load failed: {e}. Using sample.")
