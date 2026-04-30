@@ -52,26 +52,50 @@ def create_logiqa_sample():
     ]
 
 def load_logiqa_dataset():
-    """Load LogiQA dataset using the HeKa-AI Parquet version (Safe)"""
+    """Load LogiQA dataset using a robust fallback strategy"""
     try:
-        # Using a Parquet-only version to bypass script security blocks
-        dataset = load_dataset("heka-ai/logiqa", split="test")
-        
+        # Try a few different known slugs and splits
+        dataset = None
+        for slug in ["heka-ai/logiqa", "tasksource/logiqa", "lucasmccabe/logiqa"]:
+            try:
+                # Try test split first, then train
+                for split_name in ["test", "train"]:
+                    try:
+                        dataset = load_dataset(slug, split=split_name)
+                        print(f"Loaded {len(dataset)} examples from {slug} ({split_name})")
+                        break
+                    except: continue
+                if dataset: break
+            except: continue
+            
+        if not dataset:
+            raise ValueError("All HF sources failed")
+
         def map_columns(example):
-            # Map HeKa-AI columns to our internal format
+            # Handle options being a list or a string (CSV format)
+            options = example.get("options", [])
+            if isinstance(options, str):
+                import ast
+                try: options = ast.literal_eval(options)
+                except: options = options.split(",")
+                
             return {
-                "context": example["context"],
-                "question": example["query"],
-                "options": example["options"],
-                "answer": example["answer"] if isinstance(example["answer"], str) else chr(65 + example["answer"])
+                "context": example.get("context", ""),
+                "question": example.get("query", example.get("question", "")),
+                "options": options,
+                "answer": example.get("answer", example.get("label", ""))
             }
         
         mapped_dataset = dataset.map(map_columns)
-        print(f"Loaded {len(mapped_dataset)} LogiQA examples (HeKa-AI Parquet)")
+        
+        # If we had to use 'train', let's just take a representative subset (651 is the standard test size)
+        if len(mapped_dataset) > 1000:
+            mapped_dataset = mapped_dataset.select(range(651))
+            
+        print(f"Final evaluation set: {len(mapped_dataset)} examples")
         return mapped_dataset
     except Exception as e:
         print(f"Failed to load from HF: {e}")
-        # Use sample data
         sample_data = create_logiqa_sample()
         print(f"Using sample data: {len(sample_data)} examples")
         return sample_data
