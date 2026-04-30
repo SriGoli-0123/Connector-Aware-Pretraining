@@ -51,41 +51,31 @@ def create_logiqa_sample():
         }
     ]
 
-def load_logiqa_dataset():
-    """Load LogiQA dataset using a robust fallback strategy"""
-    try:
-        # Try a few different known slugs and splits
-        dataset = None
-        for slug in ["heka-ai/logiqa", "tasksource/logiqa", "lucasmccabe/logiqa"]:
-            try:
-                # Try test split first, then train
-                for split_name in ["test", "train"]:
-                    try:
-                        dataset = load_dataset(slug, split=split_name)
-                        print(f"Loaded {len(dataset)} examples from {slug} ({split_name})")
-                        break
-                    except: continue
-                if dataset: break
-            except: continue
-            
-        if not dataset:
-            raise ValueError("All HF sources failed")
+import ast
 
+def load_logiqa_dataset():
+    """Ultra-fast optimized LogiQA loader"""
+    try:
+        # Stick to the mirror we know works to avoid timeout loops
+        slug = "heka-ai/logiqa"
+        print(f"Loading {slug}...")
+        dataset = load_dataset(slug, split="train")
+        
+        # SPEED OPTIMIZATION: Select the test subset (651) BEFORE mapping
+        # This saves processing 7,000+ unnecessary rows
+        if len(dataset) > 651:
+            dataset = dataset.select(range(651))
+        
         def map_columns(example):
-            # Handle options being a list or a string (CSV format)
+            # Handle options safely
             options = example.get("options", [])
             if isinstance(options, str):
-                import ast
                 try: options = ast.literal_eval(options)
                 except: options = options.split(",")
             
-            # Get raw answer/label
+            # Map labels to A, B, C, D
             raw_ans = example.get("answer", example.get("label", ""))
-            
-            # CRITICAL FIX: Convert numerical labels (0, 1, 2, 3) to letters (A, B, C, D)
-            if isinstance(raw_ans, (int, float)):
-                final_answer = chr(65 + int(raw_ans))
-            elif isinstance(raw_ans, str) and raw_ans.isdigit():
+            if isinstance(raw_ans, (int, float, str)) and str(raw_ans).isdigit():
                 final_answer = chr(65 + int(raw_ans))
             else:
                 final_answer = str(raw_ans).upper().strip()
@@ -97,19 +87,14 @@ def load_logiqa_dataset():
                 "answer": final_answer
             }
         
+        # Now map only the 651 examples
+        print("Mapping columns...")
         mapped_dataset = dataset.map(map_columns)
-        
-        # If we had to use 'train', let's just take a representative subset (651 is the standard test size)
-        if len(mapped_dataset) > 1000:
-            mapped_dataset = mapped_dataset.select(range(651))
-            
-        print(f"Final evaluation set: {len(mapped_dataset)} examples")
+        print(f"Ready! Final set: {len(mapped_dataset)} examples")
         return mapped_dataset
     except Exception as e:
-        print(f"Failed to load from HF: {e}")
-        sample_data = create_logiqa_sample()
-        print(f"Using sample data: {len(sample_data)} examples")
-        return sample_data
+        print(f"HF Load failed: {e}. Using sample.")
+        return create_logiqa_sample()
 
 if __name__ == "__main__":
     dataset = load_logiqa_dataset()
