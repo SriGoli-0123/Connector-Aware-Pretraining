@@ -16,10 +16,17 @@ from transformers import (
     TrainingArguments, Trainer
 )
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-import deepspeed
 import logging
 import sys
 import os
+
+# Optional DeepSpeed import
+def get_deepspeed():
+    try:
+        import deepspeed
+        return deepspeed
+    except Exception:
+        return None
 
 # Add current directory to path for logiqa_data import
 sys.path.append(os.path.dirname(__file__))
@@ -51,6 +58,9 @@ class LogiQAEvaluator:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
         if self.args.use_deepspeed:
+            deepspeed = get_deepspeed()
+            if deepspeed is None:
+                raise ImportError("DeepSpeed not found or failed to initialize.")
             # DeepSpeed initialization
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.args.model_name,
@@ -72,14 +82,13 @@ class LogiQAEvaluator:
             self.model = FSDP(self.model)
             
         else:
-            # Simple inference - optimized for 4GB GPU
+            # Simple inference - Optimized for A100 (80GB)
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.args.model_name,
-                torch_dtype=torch.float16,  # Use float16 for memory efficiency
+                torch_dtype=torch.bfloat16,  # Use bfloat16 for A100
                 device_map="auto",
                 trust_remote_code=True,
-                low_cpu_mem_usage=True,
-                max_memory={0: "3.5GB"}  # Reserve memory for operations
+                low_cpu_mem_usage=True
             )
             
         logger.info("Model loaded successfully")
