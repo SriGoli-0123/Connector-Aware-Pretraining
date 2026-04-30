@@ -52,12 +52,13 @@ def create_logiqa_sample():
     ]
 
 def load_logiqa_dataset():
-    """Load LogiQA dataset using a modern, safe version"""
+    """Load LogiQA dataset using the HeKa-AI Parquet version (Safe)"""
     try:
-        # Using a modern, Parquet-based version of LogiQA to avoid script errors
-        dataset = load_dataset("tasksource/logiqa", split="test")
+        # Using a Parquet-only version to bypass script security blocks
+        dataset = load_dataset("heka-ai/logiqa", split="test")
         
         def map_columns(example):
+            # Map HeKa-AI columns to our internal format
             return {
                 "context": example["context"],
                 "question": example["query"],
@@ -66,7 +67,7 @@ def load_logiqa_dataset():
             }
         
         mapped_dataset = dataset.map(map_columns)
-        print(f"Loaded {len(mapped_dataset)} LogiQA examples from HF (Safe Version)")
+        print(f"Loaded {len(mapped_dataset)} LogiQA examples (HeKa-AI Parquet)")
         return mapped_dataset
     except Exception as e:
         print(f"Failed to load from HF: {e}")
