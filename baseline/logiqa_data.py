@@ -78,12 +78,23 @@ def load_logiqa_dataset():
                 import ast
                 try: options = ast.literal_eval(options)
                 except: options = options.split(",")
+            
+            # Get raw answer/label
+            raw_ans = example.get("answer", example.get("label", ""))
+            
+            # CRITICAL FIX: Convert numerical labels (0, 1, 2, 3) to letters (A, B, C, D)
+            if isinstance(raw_ans, (int, float)):
+                final_answer = chr(65 + int(raw_ans))
+            elif isinstance(raw_ans, str) and raw_ans.isdigit():
+                final_answer = chr(65 + int(raw_ans))
+            else:
+                final_answer = str(raw_ans).upper().strip()
                 
             return {
                 "context": example.get("context", ""),
                 "question": example.get("query", example.get("question", "")),
                 "options": options,
-                "answer": example.get("answer", example.get("label", ""))
+                "answer": final_answer
             }
         
         mapped_dataset = dataset.map(map_columns)
