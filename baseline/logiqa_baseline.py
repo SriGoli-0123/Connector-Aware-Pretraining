@@ -196,11 +196,19 @@ class LogiQAEvaluator:
             predicted_answer = self.extract_answer(response)
             
             # Get correct answer
-            correct_answer = example.get('answer', example.get('label', ''))
-            if isinstance(correct_answer, int):
-                correct_answer = chr(65 + correct_answer)  # Convert 0,1,2,3 to A,B,C,D
-                
+            correct_answer = example.get('answer', '')
             is_correct = predicted_answer == correct_answer.upper()
+            
+            # DIAGNOSTIC PRINT FOR FIRST 3 EXAMPLES
+            if i < 3:
+                print(f"\n--- DIAGNOSTIC EXAMPLE {i+1} ---")
+                print(f"PROMPT: {prompt[:200]}...")
+                print(f"MODEL RESPONSE: '{response}'")
+                print(f"EXTRACTED: '{predicted_answer}'")
+                print(f"CORRECT: '{correct_answer}'")
+                print(f"MATCH: {is_correct}")
+                print("-" * 30)
+
             if is_correct:
                 correct += 1
             total += 1
