@@ -142,17 +142,35 @@ class LogiQAEvaluator:
         return response
         
     def extract_answer(self, response: str) -> str:
-        """Extract answer choice from response"""
-        response = response.upper().strip()
+        """Robustly extract answer choice from model response"""
+        # 1. Clean response
+        clean_response = response.strip().upper()
         
-        # Look for single letter answers
-        for choice in ['A', 'B', 'C', 'D', 'E']:
-            if choice in response:
-                return choice
+        # 2. Look for patterns like "ANSWER: A" or "(A)" or "CHOICE A"
+        import re
+        patterns = [
+            r"ANSWER:\s*([A-E])",
+            r"\(([A-E])\)",
+            r"([A-E])\.",
+            r"CHOICE\s*([A-E])",
+            r"^([A-E])$"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, clean_response)
+            if match:
+                return match.group(1)
+        
+        # 3. Fallback: Just look for any single occurrence of A, B, C, D, E
+        # We prioritize A-E if they appear alone
+        words = clean_response.replace('.', ' ').replace('(', ' ').replace(')', ' ').split()
+        for word in words:
+            if word in ['A', 'B', 'C', 'D', 'E']:
+                return word
                 
-        # Fallback to first character if it's a valid choice
-        if response and response[0] in ['A', 'B', 'C', 'D', 'E']:
-            return response[0]
+        # 4. Final Fallback: First character
+        if clean_response and clean_response[0] in ['A', 'B', 'C', 'D', 'E']:
+            return clean_response[0]
             
         return "UNKNOWN"
         
