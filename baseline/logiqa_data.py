@@ -52,12 +52,24 @@ def create_logiqa_sample():
     ]
 
 def load_logiqa_dataset():
-    """Load LogiQA dataset with fallback to sample data"""
+    """Load LogiQA dataset with correct mapping"""
     try:
         # Try to load from HuggingFace
-        dataset = load_dataset("lucasmccabe/logiqa", split="test")
-        print(f"Loaded {len(dataset)} LogiQA examples from HuggingFace")
-        return dataset
+        # Note: lucasmccabe/logiqa uses 'query' instead of 'question'
+        dataset = load_dataset("lucasmccabe/logiqa", split="test", trust_remote_code=True)
+        
+        # Ensure it has the expected columns by mapping them if necessary
+        def map_columns(example):
+            return {
+                "context": example["context"],
+                "question": example["query"],
+                "options": example["options"],
+                "answer": chr(65 + example["label"]) if isinstance(example["label"], int) else example["label"]
+            }
+        
+        mapped_dataset = dataset.map(map_columns)
+        print(f"Loaded {len(mapped_dataset)} LogiQA examples from HuggingFace")
+        return mapped_dataset
     except Exception as e:
         print(f"Failed to load from HuggingFace: {e}")
         # Use sample data
